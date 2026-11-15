@@ -257,6 +257,11 @@ public class ApiHandler
 				HandleRetentionApply(ctx, session);
 				return;
 			}
+			if (path == "/api/backup/verify" && method == "POST")
+			{
+				HandleBackupVerify(ctx, session);
+				return;
+			}
 			if (path == "/api/backup/schedules" && method == "GET")
 			{
 				HandleSchedulesList(ctx, session);
@@ -1415,6 +1420,54 @@ public class ApiHandler
 			s = "schedule-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
 		}
 		return s;
+	}
+
+	/// <summary>
+	/// POST /api/backup/verify — проверить копию на пригодность к восстановлению.
+	/// Тело: <c>{"name":"&lt;имя каталога копии&gt;"}</c> или пусто — тогда все копии.
+	/// </summary>
+	private void HandleBackupVerify(HttpListenerContext ctx, SessionInfo si)
+	{
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		string root = DefaultBackupDestination();
+
+		List<object> results = new List<object>();
+		if (name.Length > 0)
+		{
+			// Имя прогоняется через GetFileName: выйти за каталог бэкапов нельзя.
+			string safe = Path.GetFileName(name);
+			string full = Path.GetFullPath(Path.Combine(root, safe));
+			string rootFull = Path.GetFullPath(root);
+			if (!full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+			{
+				WriteJson(ctx, Json.Obj("error", "недопустимое имя копии"), 400);
+				return;
+			}
+			long expected = 0L;
+			foreach (BackupCopy c in BackupRetention.Scan(root))
+			{
+				if (string.Equals(c.Path, full, StringComparison.OrdinalIgnoreCase))
+				{
+					expected = c.SizeBytes;
+					break;
+				}
+			}
+			results.Add(BackupVerifier.Verify(full, expected).ToJson());
+		}
+		else
+		{
+			foreach (BackupVerifier.Result r in BackupVerifier.VerifyAll(root))
+			{
+				results.Add(r.ToJson());
+			}
+		}
+
+		_audit.Write(si.User, "backup.verify", name.Length > 0 ? name : "все копии", ClientIp(ctx));
+		Dictionary<string, object> res = Json.Obj();
+		res["destination"] = root;
+		res["results"] = results;
+		WriteJson(ctx, res, 200);
 	}
 
 	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)	{

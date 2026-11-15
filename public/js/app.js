@@ -3468,12 +3468,16 @@
       var copies = data.copies || [];
       if (copies.length) {
         html += '<div class="ret-list"><table class="cfg-table"><thead><tr>' +
-          '<th>Копия</th><th>Объект</th><th>Когда</th><th>Размер</th></tr></thead><tbody>';
+          '<th>Копия</th><th>Объект</th><th>Когда</th><th>Размер</th><th style="width:50px"></th></tr></thead><tbody>';
         copies.slice(0, 20).forEach(function (c) {
           html += '<tr><td><code>' + esc(c.name) + '</code></td>' +
             '<td>' + esc(c.object) + '</td>' +
             '<td class="muted">' + esc(fmtDateTime(c.timestamp)) + '</td>' +
-            '<td>' + fmtSize(c.sizeBytes) + '</td></tr>';
+            '<td>' + fmtSize(c.sizeBytes) + '</td>' +
+            '<td>' + (state.me && state.me.canWrite
+              ? '<button class="btn btn-sm" data-verify="' + esc(c.name) + '" title="Проверить копию">' +
+                '<i class="fas fa-shield-check"></i></button>'
+              : '') + '</td></tr>';
         });
         html += '</tbody></table>';
         if (copies.length > 20) {
@@ -3483,6 +3487,25 @@
       }
 
       box.innerHTML = html;
+
+      $$('[data-verify]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var nm = btn.getAttribute('data-verify');
+          btn.disabled = true;
+          btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+          api('/api/backup/verify', { method: 'POST', body: { name: nm } })
+            .then(function (r) {
+              var res = (r.results || [])[0];
+              if (!res) { toast('Нет результата', 'error'); return; }
+              showVerifyResult(res);
+            })
+            .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); })
+            .then(function () {
+              btn.disabled = false;
+              btn.innerHTML = '<i class="fas fa-shield-check"></i>';
+            });
+        });
+      });
 
       var preview = document.getElementById('ret-preview');
       if (preview) {
@@ -3736,6 +3759,40 @@
   function closeScheduleForm() {
     var m = document.getElementById('sch-modal');
     if (m && m.parentNode) m.parentNode.removeChild(m);
+  }
+
+  /** Показывает результат проверки копии в модальном окне. */
+  function showVerifyResult(res) {
+    var icon = res.status === 'ok' ? 'fa-check-circle' : (res.status === 'warn' ? 'fa-exclamation-triangle' : 'fa-times-circle');
+    var color = res.status === 'ok' ? 'var(--ok)' : (res.status === 'warn' ? 'var(--warn)' : 'var(--fail)');
+
+    var rows = (res.checks || []).map(function (c) {
+      var ci = c.status === 'ok' ? 'fa-check' : (c.status === 'warn' ? 'fa-exclamation' : 'fa-times');
+      var cc = c.status === 'ok' ? 'var(--ok)' : (c.status === 'warn' ? 'var(--warn)' : 'var(--fail)');
+      return '<tr><td><i class="fas ' + ci + '" style="color:' + cc + '"></i> ' + esc(c.name) + '</td>' +
+        '<td class="muted">' + esc(c.detail) + '</td></tr>';
+    }).join('');
+
+    var html = '<div class="modal-backdrop" id="verify-modal"><div class="modal" style="max-width:640px">' +
+      '<h3><i class="fas ' + icon + '" style="color:' + color + '"></i> ' + esc(res.summary) + '</h3>' +
+      '<div class="kv">' +
+      '<div class="k">Копия</div><div><code>' + esc(res.name) + '</code></div>' +
+      '<div class="k">Размер</div><div>' + fmtSize(res.sizeBytes) + ' · файлов ' + res.fileCount + '</div>' +
+      '</div>' +
+      '<table class="cfg-table" style="margin-top:10px"><tbody>' + rows + '</tbody></table>' +
+      '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' +
+      'Проверка структурная: наличие файлов и подписи образов дисков. ' +
+      'Она ловит недокопированные и повреждённые файлы, но не заменяет пробное восстановление.</p>' +
+      '<div class="form-actions"><button class="btn" id="verify-close">Закрыть</button></div>' +
+      '</div></div>';
+
+    var host = document.createElement('div');
+    host.innerHTML = html;
+    document.body.appendChild(host.firstChild);
+    document.getElementById('verify-close').addEventListener('click', function () {
+      var m = document.getElementById('verify-modal');
+      if (m && m.parentNode) m.parentNode.removeChild(m);
+    });
   }
 
   // ------------------------------------------------------------------ форма компании
