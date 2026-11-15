@@ -211,6 +211,8 @@ reference/                # сторонние исходники, сохран�
 
 ## Документация
 
+- [AGENTS.md](AGENTS.md) — правила работы: постоянные просьбы, ограничения, стиль
+- [PROMPT.md](PROMPT.md) — исходное ТЗ
 - [ROADMAP.md](ROADMAP.md) — план развития от простого к сложному
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — как всё устроено внутри
 - [docs/CONFIG.md](docs/CONFIG.md) — полный справочник по конфигурации
