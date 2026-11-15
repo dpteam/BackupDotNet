@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>BackupDotNet</AssemblyName>
+    <RootNamespace>BackupDotNet</RootNamespace>
+    <ApplicationIcon>..\..\assets\icon.ico</ApplicationIcon>
+    <StartupObject>BackupDotNet.Program</StartupObject>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BackupDotNet.Core\BackupDotNet.Core.csproj" />
+    <ProjectReference Include="..\BackupDotNet.Web\BackupDotNet.Web.csproj" />
+    <ProjectReference Include="..\BackupDotNet.Deploy\BackupDotNet.Deploy.csproj" />
+    <ProjectReference Include="..\BackupDotNet.Manage\BackupDotNet.Manage.csproj" />
+  </ItemGroup>
+
+  <!-- Веб-интерфейс всегда лежит рядом с exe: <output>\public\** -->
+  <ItemGroup>
+    <Content Include="..\..\public\**\*">
+      <Link>public\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!-- Шаблоны конфигурации копируются как *.example и не перетирают рабочие файлы. -->
+  <ItemGroup>
+    <Content Include="..\..\config\settings.example.json;..\..\config\branding.example.json;..\..\config\env.example.json;..\..\config\secrets.example.json">
+      <Link>config\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

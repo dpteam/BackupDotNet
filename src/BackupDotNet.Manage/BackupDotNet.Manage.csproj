@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>BackupDotNet.Manage</AssemblyName>
+    <RootNamespace>BackupDotNet.Manage</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BackupDotNet.Core\BackupDotNet.Core.csproj" />
+    <ProjectReference Include="..\BackupDotNet.Deploy\BackupDotNet.Deploy.csproj" />
+  </ItemGroup>
+
+</Project>

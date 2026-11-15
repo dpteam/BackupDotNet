@@ -1,0 +1,53 @@
+{
+  "agent": {
+    "name": "BackupDotNet",
+    "dataDir": "data",
+    "publicDir": "public",
+    "configDir": "config",
+    "httpPort": 8080,
+    "bindAddress": "http://+:8080/",
+    "timezone": "Europe/Moscow",
+    "language": "ru"
+  },
+  "scheduler": {
+    "tickSeconds": 60,
+    "jitterSeconds": 120,
+    "maxParallelChecks": 4,
+    "defaultIntervalMinutes": 60
+  },
+  "veeam": {
+    "requestTimeoutSeconds": 30,
+    "ignoreCertErrorsDefault": true,
+    "restApiVersion": "1.1-rev1"
+  },
+  "zip": {
+    "tempDir": "",
+    "crcReadBufferKb": 256
+  },
+  "zabbix": {
+    "enabled": false,
+    "server": "",
+    "port": 10051,
+    "mode": "sender",
+    "timeoutSeconds": 5,
+    "batchSize": 500,
+    "batchMaxBytes": 65536,
+    "api": {
+      "enabled": false,
+      "url": "",
+      "token": "",
+      "autoCreateHosts": false,
+      "hostGroup": "Backup",
+      "templateName": "BackupDotNet"
+    }
+  },
+  "web": {
+    "requireAuth": true,
+    "sessionTimeoutMinutes": 480
+  },
+  "logging": {
+    "level": "info",
+    "maxFileSizeMb": 32,
+    "keepDays": 90
+  }
+}

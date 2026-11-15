@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>BackupDotNet.Web</AssemblyName>
+    <RootNamespace>BackupDotNet.Web</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BackupDotNet.Core\BackupDotNet.Core.csproj" />
+    <ProjectReference Include="..\BackupDotNet.Deploy\BackupDotNet.Deploy.csproj" />
+    <ProjectReference Include="..\BackupDotNet.Manage\BackupDotNet.Manage.csproj" />
+  </ItemGroup>
+
+</Project>

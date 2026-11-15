@@ -1,0 +1,25 @@
+{
+  "documentTitle": "BackupDotNet · Мониторинг",
+  "brand": {
+    "part1": "Backup",
+    "part2": "DotNet",
+    "part1Color": "#0088FF",
+    "part2Color": "#FFFFFF",
+    "tagline": "Мониторинг бэкапов, доступности и железа",
+    "logoLight": "img/logo.png",
+    "logoDark": "img/logo-dark.png",
+    "favicon": "img/favicon.ico",
+    "footer": "BackupDotNet",
+    "footerUrl": "",
+    "footerUrlText": "",
+    "productName": "BackupDotNet",
+    "company": "BackupDotNet",
+    "description": "Мониторинг бэкапов, доступности и железа",
+    "installDir": "C:\\BackupDotNet\\",
+    "dataDir": "C:\\ProgramData\\BackupDotNet",
+    "serviceName": "BackupDotNetService",
+    "serviceNameRemote": "BackupDotNetRemote",
+    "userAgent": "BackupDotNet",
+    "zabbixTemplateName": "BackupDotNet"
+  }
+}

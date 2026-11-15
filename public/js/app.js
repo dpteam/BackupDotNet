@@ -245,6 +245,7 @@
   function route() {
     parseHash();
     setActiveNav();
+    stopLogsPolling();
 
     if (state.route === 'month') return renderMonth();
     if (state.route === 'uptime') return renderUptime();
@@ -252,6 +253,7 @@
     if (state.route === 'users') return renderUsers();
     if (state.route === 'deploy') return renderDeploy();
     if (state.route === 'manage') return renderManage();
+    if (state.route === 'logs') return renderLogs();
     if (state.route === 'settings') return renderSettings();
     if (state.route === 'company') {
       if (state.sub === 'edit' || state.companyId === 'new') return renderCompanyForm(state.companyId);
@@ -2319,19 +2321,19 @@
       brand: {
         part1: b.part1 || 'Backup',
         part2: b.part2 || 'Monitor',
-        part1Color: b.part1Color || '#FF9800',
+        part1Color: b.part1Color || '#0088FF',
         part2Color: b.part2Color || '#FFFFFF',
         tagline: b.tagline || 'Мониторинг бэкапов',
         logoLight: b.logoLight || 'img/logo.png',
         logoDark: b.logoDark || 'img/logo-dark.png',
-        favicon: b.favicon || 'img/logo.png',
-        footer: b.footerText || 'Компания',
-        footerUrl: b.footerUrl || 'https://example.local',
-        footerUrlText: b.footerUrlText || 'example.local',
-        productName: b.productName || 'Backup Monitor',
-        company: b.company || 'Компания',
-        description: b.description || 'Мониторинг бэкапов',
-        installDir: b.installDir || 'C:\\Program Files\\BackupMonitor',
+        favicon: b.favicon || 'img/favicon.ico',
+        footer: b.footerText || 'BackupDotNet',
+        footerUrl: b.footerUrl || '',
+        footerUrlText: b.footerUrlText || '',
+        productName: b.productName || 'BackupDotNet',
+        company: b.company || 'BackupDotNet',
+        description: b.description || 'Мониторинг бэкапов, доступности и железа',
+        installDir: b.installDir || 'C:\\BackupDotNet',
         dataDir: b.dataDir || 'C:\\ProgramData\\BackupMonitor',
         serviceName: b.serviceName || 'BackupMonitor',
         serviceNameRemote: b.serviceNameRemote || 'BackupMonitorRemote',
@@ -2549,6 +2551,96 @@
           .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); });
       });
 
+    }).catch(function (err) {
+      view.innerHTML = '<div class="card"><div class="card-body">Ошибка: ' + esc(err.message) + '</div></div>';
+    });
+  }
+
+  // ------------------------------------------------------------------ журналы агента
+
+  var logsState = { file: '', timer: null, lines: 400, auto: true };
+
+  function stopLogsPolling() {
+    if (logsState.timer) {
+      clearInterval(logsState.timer);
+      logsState.timer = null;
+    }
+  }
+
+  function renderLogs() {
+    view.innerHTML = '<div class="muted">Загрузка…</div>';
+    stopLogsPolling();
+
+    api('/api/logs').then(function (data) {
+      var files = data.files || [];
+      if (!files.length) {
+        view.innerHTML = '<h2 class="page-title"><i class="fas fa-file-lines"></i> Журналы</h2>' +
+          '<div class="card"><div class="card-body muted">Журналы ещё не созданы. ' +
+          'Каталог: <code>' + esc(data.dir) + '</code></div></div>';
+        return;
+      }
+
+      var current = data.current || files[0].name;
+      if (!logsState.file) logsState.file = current;
+      var exists = files.some(function (f) { return f.name === logsState.file; });
+      if (!exists) logsState.file = current;
+
+      var opts = files.map(function (f) {
+        return '<option value="' + esc(f.name) + '"' + (f.name === logsState.file ? ' selected' : '') + '>' +
+          esc(f.name) + '  ·  ' + fmtSize(f.size) + '  ·  ' + fmtDateTime(f.modified) + '</option>';
+      }).join('');
+
+      var html = '<h2 class="page-title"><i class="fas fa-file-lines"></i> Журналы</h2>';
+
+      html += '<div class="card"><div class="card-head"><i class="fas fa-terminal"></i> Журнал агента' +
+        '<span class="spacer"></span>' +
+        '<label class="log-auto"><input type="checkbox" id="logs-auto"' + (logsState.auto ? ' checked' : '') + '> автообновление</label>' +
+        '<button class="btn btn-sm" id="logs-refresh"><i class="fas fa-sync-alt"></i> Обновить</button>' +
+        '</div><div class="card-body">' +
+        '<div class="log-toolbar">' +
+        '<select id="logs-file" class="log-select">' + opts + '</select>' +
+        '<select id="logs-lines" class="log-select log-lines">' +
+        ['200', '400', '1000', '2000'].map(function (n) {
+          return '<option value="' + n + '"' + (Number(n) === logsState.lines ? ' selected' : '') + '>' + n + ' строк</option>';
+        }).join('') +
+        '</select>' +
+        '<span class="muted log-dir"><code>' + esc(data.dir) + '</code></span>' +
+        '</div>' +
+        '<pre id="logs-text" class="log-view">Загрузка…</pre>' +
+        '</div></div>';
+
+      view.innerHTML = html;
+
+      function loadTail() {
+        var pre = document.getElementById('logs-text');
+        if (!pre) return;
+        api('/api/logs/tail?name=' + encodeURIComponent(logsState.file) + '&lines=' + logsState.lines)
+          .then(function (r) {
+            var atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 24;
+            pre.textContent = r.text || '(пусто)';
+            if (atBottom) pre.scrollTop = pre.scrollHeight;
+          })
+          .catch(function (err) { pre.textContent = 'Ошибка: ' + err.message; });
+      }
+
+      loadTail();
+
+      document.getElementById('logs-file').addEventListener('change', function () {
+        logsState.file = this.value;
+        loadTail();
+      });
+      document.getElementById('logs-lines').addEventListener('change', function () {
+        logsState.lines = Number(this.value) || 400;
+        loadTail();
+      });
+      document.getElementById('logs-refresh').addEventListener('click', loadTail);
+      document.getElementById('logs-auto').addEventListener('change', function () {
+        logsState.auto = this.checked;
+        stopLogsPolling();
+        if (logsState.auto) logsState.timer = setInterval(loadTail, 5000);
+      });
+
+      if (logsState.auto) logsState.timer = setInterval(loadTail, 5000);
     }).catch(function (err) {
       view.innerHTML = '<div class="card"><div class="card-body">Ошибка: ' + esc(err.message) + '</div></div>';
     });
@@ -3810,8 +3902,21 @@
 
     $$('.brand-footer-text').forEach(function (el) { el.textContent = b.footerText; });
     $$('.brand-footer-url').forEach(function (el) {
-      el.textContent = b.footerUrlText;
+      // Если ссылка не задана в брендинге — прячем её вместе с разделителем,
+      // чтобы в подвале не висел пустой «example.com».
+      if (!b.footerUrl) {
+        el.textContent = '';
+        el.removeAttribute('href');
+        el.classList.add('hidden');
+        return;
+      }
+      el.classList.remove('hidden');
+      el.textContent = b.footerUrlText || b.footerUrl;
       el.href = b.footerUrl;
+    });
+    $$('.footer-sep').forEach(function (el) {
+      if (b.footerUrl) el.classList.remove('hidden');
+      else el.classList.add('hidden');
     });
   }
 
@@ -4819,6 +4924,12 @@
     if (navManage) {
       if (me && me.canManageUsers) navManage.classList.remove('hidden');
       else navManage.classList.add('hidden');
+    }
+
+    var navLogs = document.getElementById('nav-logs');
+    if (navLogs) {
+      if (me && me.canManageUsers) navLogs.classList.remove('hidden');
+      else navLogs.classList.add('hidden');
     }
   }
 

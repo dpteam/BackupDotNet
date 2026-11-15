@@ -3,8 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Мониторинг бэкапов</title>
-<link rel="icon" href="img/logo.png" id="brand-favicon">
+<title>BackupDotNet · Мониторинг</title>
+<link rel="icon" href="img/favicon.ico" id="brand-favicon">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<meta name="description" content="Мониторинг бэкапов, доступности и железа">
+<meta name="theme-color" content="#0088FF">
 <link rel="stylesheet" href="vendor/fa/css/all.min.css">
 <link rel="stylesheet" href="css/app.css">
 </head>
@@ -18,7 +21,7 @@
         <img src="img/logo.png" alt="" class="logo-light brand-logo-light">
         <img src="img/logo-dark.png" alt="" class="logo-dark brand-logo-dark">
       </div>
-      <h1><span class="bt-brand brand-part1"></span> <span class="bt-rest brand-part2"></span></h1>
+      <h1><span class="bt-brand brand-part1"></span><span class="bt-rest brand-part2"></span></h1>
       <p class="login-tagline brand-tagline"></p>
     </div>
     <form id="login-form" autocomplete="on">
@@ -33,7 +36,7 @@
     </form>
     <div class="login-footer">
       <a href="#" target="_blank" rel="noopener" class="brand-footer-url"></a>
-      <span>·</span>
+      <span class="footer-sep">·</span>
       <a href="#" id="theme-toggle-login"><i class="fas fa-adjust"></i> Тема</a>
     </div>
   </div>
@@ -49,7 +52,7 @@
           <img src="img/logo.png" alt="" class="brand-logo logo-light brand-logo-light">
           <img src="img/logo-dark.png" alt="" class="brand-logo logo-dark brand-logo-dark">
         </span>
-        <span class="brand-text"><span class="bt-brand brand-part1"></span> <span class="bt-rest brand-part2"></span></span>
+        <span class="brand-text"><span class="bt-brand brand-part1"></span><span class="bt-rest brand-part2"></span></span>
       </a>
 
       <nav class="nav">
@@ -60,6 +63,7 @@
         <a href="#/users" data-nav="users" id="nav-users" class="hidden"><i class="fas fa-users"></i> <span>Пользователи</span></a>
         <a href="#/deploy" data-nav="deploy" id="nav-deploy" class="hidden"><i class="fas fa-cloud-upload-alt"></i> <span>Развёртывание</span></a>
         <a href="#/manage" data-nav="manage" id="nav-manage" class="hidden"><i class="fas fa-sliders-h"></i> <span>Управление</span></a>
+        <a href="#/logs" data-nav="logs" id="nav-logs" class="hidden"><i class="fas fa-file-lines"></i> <span>Журналы</span></a>
         <a href="#/settings" data-nav="settings"><i class="fas fa-cog"></i> <span>Настройки</span></a>
       </nav>
 
@@ -79,7 +83,7 @@
   </main>
 
   <footer class="footer">
-    <span>© <span class="brand-footer-text"></span> · <a href="#" target="_blank" rel="noopener" class="brand-footer-url"></a></span>
+    <span>© <span class="brand-footer-text"></span><span class="footer-sep"> · </span><a href="#" target="_blank" rel="noopener" class="brand-footer-url"></a></span>
     <span id="footer-status" class="muted"></span>
   </footer>
 </div>

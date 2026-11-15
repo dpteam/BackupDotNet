@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>BackupDotNet.Deploy</AssemblyName>
+    <RootNamespace>BackupDotNet.Deploy</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BackupDotNet.Core\BackupDotNet.Core.csproj" />
+  </ItemGroup>
+
+  <!-- System.Management.Automation подключается в Directory.Build.props. -->
+
+</Project>

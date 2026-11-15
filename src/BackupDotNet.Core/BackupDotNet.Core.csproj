@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>BackupDotNet.Core</AssemblyName>
+    <RootNamespace>BackupDotNet.Core</RootNamespace>
+  </PropertyGroup>
+
+  <!-- System.Management.Automation подключается в Directory.Build.props
+       (единая точка: путь к сборке Windows PowerShell 5.1). -->
+
+</Project>

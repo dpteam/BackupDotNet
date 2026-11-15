@@ -1,0 +1,26 @@
+{
+  "_comment": "Брендинг продакшн-инстанса DPT. Копируется в bin/config/branding.json скриптом tools/build-prod.ps1.",
+  "documentTitle": "DPT.Backup · Мониторинг",
+  "brand": {
+    "part1": "DPT",
+    "part2": ".Backup",
+    "part1Color": "#0088FF",
+    "part2Color": "#FFFFFF",
+    "tagline": "Мониторинг бэкапов, доступности и железа",
+    "logoLight": "img/logo.png",
+    "logoDark": "img/logo-dark.png",
+    "favicon": "img/favicon.ico",
+    "footer": "DPT",
+    "footerUrl": "",
+    "footerUrlText": "",
+    "productName": "DPT.Backup",
+    "company": "DPT",
+    "description": "Мониторинг бэкапов, доступности и железа",
+    "installDir": "C:\\DPT\\Backup\\",
+    "dataDir": "C:\\ProgramData\\DPT\\Backup",
+    "serviceName": "DPTBackupService",
+    "serviceNameRemote": "DPTBackupRemote",
+    "userAgent": "DPT.Backup",
+    "zabbixTemplateName": "DPT.Backup"
+  }
+}

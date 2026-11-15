@@ -5,12 +5,12 @@
    ========================================================================== */
 
 :root {
-  --brand:        #0D5EFF;
-  --brand-hi:     #4D8BFF;
-  --brand-dark:   #120948;
+  --brand:        #0066CC;
+  --brand-hi:     #0088FF;
+  --brand-dark:   #000088;
   --accent:       #F20127;
-  --logo1:        #FFD54F;
-  --logo2:        #FF9800;
+  --logo1:        #0088FF;
+  --logo2:        #000088;
 
   --bg:           #F6F6FF;
   --bg-alt:       #ECEFFB;
@@ -71,9 +71,9 @@ html.theme-anim *::after {
 }
 
 [data-theme="dark"] {
-  --brand:        #4D8BFF;
-  --brand-hi:     #7FAEFF;
-  --brand-dark:   #0A0630;
+  --brand:        #4D9BFF;
+  --brand-hi:     #0088FF;
+  --brand-dark:   #000B33;
   --accent:       #FF3B5C;
 
   --bg:           #12141C;
@@ -127,7 +127,7 @@ a:hover { text-decoration: underline; }
 .login-screen {
   position: fixed; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(180deg, var(--brand-dark) 0%, #1b2a63 55%, var(--brand) 100%);
+  background: linear-gradient(180deg, var(--brand-dark) 0%, #00205E 55%, #0044AA 100%);
   padding: 20px;
 }
 
@@ -142,7 +142,7 @@ a:hover { text-decoration: underline; }
 
 /* шапка карточки на тёмном фоне — чтобы белый текст читался */
 .login-brand {
-  background: linear-gradient(180deg, var(--brand-dark) 0%, #1b2a63 60%, var(--brand) 100%);
+  background: linear-gradient(180deg, #00225C 0%, #001A46 60%, var(--brand-dark) 100%);
   padding: 22px 26px 16px;
   text-align: center;
   border-bottom: 1px solid rgba(0, 0, 0, .35);
@@ -158,14 +158,14 @@ a:hover { text-decoration: underline; }
 .login-logo img {
   position: absolute; inset: 0;
   width: 72px; height: 72px; object-fit: contain;
-  background: #fff; border-radius: 10px; padding: 4px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, .45);
+  background: transparent; border-radius: 10px; padding: 0;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .5));
   transition: opacity var(--theme-transition), background-color var(--theme-transition);
 }
 
 [data-theme="dark"] .login-logo img {
-  background: #0E1016;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .7), 0 0 0 1px rgba(255, 255, 255, .08);
+  background: transparent;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, .75));
 }
 
 .login-brand h1 {
@@ -209,9 +209,9 @@ a:hover { text-decoration: underline; }
 /* ---------------------------------------------------------------- шапка */
 
 .topbar {
-  background: linear-gradient(180deg, var(--brand-hi) 0%, var(--brand) 48%, #0A4BD1 100%);
-  border-bottom: 1px solid var(--brand-dark);
-  box-shadow: var(--inset), 0 1px 6px rgba(16,24,64,.22);
+  background: linear-gradient(180deg, #0047B3 0%, #002E7A 55%, #001A4D 100%);
+  border-bottom: 1px solid #00005A;
+  box-shadow: var(--inset), 0 1px 6px rgba(0, 24, 74, .32);
   position: sticky; top: 0; z-index: 50;
 }
 
@@ -231,18 +231,16 @@ a:hover { text-decoration: underline; }
 .brand-logo {
   position: absolute; inset: 0;
   width: 30px; height: 30px; object-fit: contain;
-  background: #fff; border-radius: 5px; padding: 2px;
-  box-shadow: 0 1px 2px rgba(0,0,0,.3);
+  background: transparent; border-radius: 5px; padding: 0;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .55));
   transition: opacity var(--theme-transition), background-color var(--theme-transition);
 }
 
 /* --------------------------------------------------------------------------
    Логотип: две картинки, плавный кроссфейд при смене темы.
-   Светлая тема  — logo.png       (чёрные буквы + жёлтый лист)
-   Тёмная тема   — logo-dark.png  (белые буквы + жёлтый лист)
-   CSS hue-rotate для этого не годится: матричная аппроксимация
-   превращает жёлтый в коричневый. Поэтому заранее сгенерированный PNG
-   (tools\New-DarkLogo.ps1).
+   Светлая тема  — logo.png       (синий щит #0088FF → #004CCC)
+   Тёмная тема   — logo-dark.png  (более светлый щит #55AAFF → #0080FF)
+   Оба PNG генерируются tools\generate-assets.ps1.
    -------------------------------------------------------------------------- */
 .logo-light { opacity: 1; }
 .logo-dark  { opacity: 0; }
@@ -251,8 +249,9 @@ a:hover { text-decoration: underline; }
 [data-theme="dark"] .logo-dark  { opacity: 1; }
 
 [data-theme="dark"] .brand-logo {
-  background: #0E1016;
-  box-shadow: 0 1px 3px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.08);
+  background: transparent;
+  box-shadow: none;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .7));
 }
 .brand-text {
   font-size: 14px; font-weight: 800; letter-spacing: .3px;
@@ -262,7 +261,7 @@ a:hover { text-decoration: underline; }
 /* ---- фирменные цвета надписи ---------------------------------------- */
 /* Значения приходят из config/branding.json (P17); здесь — значения по умолчанию */
 .bt-brand {
-  color: var(--brand-part1, #FF9800);
+  color: var(--brand-part1, #0088FF);
   text-shadow:
     0 1px 0 rgba(0, 0, 0, .65),
     0 2px 3px rgba(0, 0, 0, .55),
@@ -576,11 +575,11 @@ td.cell-click:active span { transform: scale(1.02); }
 .btn-block { width: 100%; justify-content: center; }
 
 .btn-primary {
-  background: linear-gradient(180deg, var(--brand-hi), var(--brand) 55%, #0A4BD1);
+  background: linear-gradient(180deg, var(--brand-hi), var(--brand) 55%, #0055B3);
   border-color: var(--brand-dark);
   color: #fff;
   text-shadow: 0 -1px 0 rgba(0,0,0,.35);
-  box-shadow: var(--inset), 0 1px 3px rgba(13,94,255,.4);
+  box-shadow: var(--inset), 0 1px 3px rgba(0,102,204,.4);
 }
 .btn-primary:hover { color: #fff; border-color: var(--brand-dark); filter: brightness(1.06); }
 
@@ -1138,6 +1137,49 @@ td.cell-click:active span { transform: scale(1.02); }
 
 @media (max-width: 700px) {
   .deploy-grid { grid-template-columns: 1fr; }
+}
+
+/* ---------------------------------------------------------------- журналы агента */
+
+.log-toolbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.log-select {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  max-width: 100%;
+}
+.log-lines { width: auto; }
+.log-dir { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-dir code { font-size: 11px; }
+
+.log-auto {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 400; color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.log-view {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 62vh;
+  overflow: auto;
+  background: #0B1220;
+  color: #D6E2F5;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 4;
 }
 
 /* ---------------------------------------------------------------- печать */

@@ -1,0 +1,96 @@
+{
+  "id": "example",
+  "name": "ООО «Пример»",
+  "shortName": "Пример",
+  "timezone": "Europe/Moscow",
+  "enabled": true,
+  "tags": ["demo"],
+  "contacts": [
+    {
+      "role": "ИТ-отдел",
+      "name": "Иван Иванов",
+      "phone": "+7 900 000-00-00",
+      "email": "it@example.org"
+    }
+  ],
+  "policy": {
+    "freshnessHours": 26,
+    "freshnessHoursWeekly": 192,
+    "minSizeMb": 10,
+    "consecutiveFailuresToFail": 2,
+    "maxSizeDropPercent": 0,
+    "requireOffsite": false,
+    "silenceWindow": { "from": "", "to": "" }
+  },
+  "zabbix": {
+    "enabled": true,
+    "host": "BC-example",
+    "displayName": "Пример · бэкапы",
+    "server": "",
+    "port": 10051,
+    "mode": "",
+    "macros": { "{$BC.MAX_AGE_H}": "26h" }
+  },
+  "sources": [
+    {
+      "id": "files-1c",
+      "type": "file-age",
+      "enabled": true,
+      "intervalMinutes": 60,
+      "jobName": "1С · ежедневный бэкап",
+      "paths": ["D:\\Backup\\1C\\*.dt"],
+      "maxAgeHours": 26
+    },
+    {
+      "id": "zip-nightly",
+      "type": "zip",
+      "enabled": true,
+      "intervalMinutes": 120,
+      "jobName": "Ночной ZIP",
+      "path": "D:\\Backup\\nightly\\latest.zip",
+      "maxAgeHours": 26
+    },
+    {
+      "id": "veeam-files",
+      "type": "veeam-files",
+      "enabled": false,
+      "intervalMinutes": 60,
+      "jobName": "Veeam · файлы",
+      "paths": ["E:\\Veeam\\*.vbk"],
+      "maxAgeHours": 26
+    },
+    {
+      "id": "ping-gw",
+      "type": "ping",
+      "enabled": true,
+      "intervalMinutes": 5,
+      "jobName": "Шлюз",
+      "host": "10.0.0.1",
+      "attempts": 3,
+      "timeoutMs": 3000
+    },
+    {
+      "id": "tcp-rdp",
+      "type": "tcp",
+      "enabled": true,
+      "intervalMinutes": 10,
+      "jobName": "RDP сервера",
+      "host": "10.0.0.10",
+      "port": 3389,
+      "timeoutSeconds": 5
+    },
+    {
+      "id": "http-portal",
+      "type": "http",
+      "enabled": false,
+      "intervalMinutes": 15,
+      "jobName": "Портал",
+      "url": "https://portal.example.org/health",
+      "method": "GET",
+      "expectedStatus": [200],
+      "keyword": "ok",
+      "timeoutSeconds": 10,
+      "ignoreCertErrors": false
+    }
+  ]
+}
