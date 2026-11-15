@@ -95,6 +95,11 @@ public class Settings
 
 	public bool UpdatesCheckOnStart = true;
 
+	// ------------------------------------------------------------------ бэкапы
+
+	/// <summary>Куда складывать бэкапы по умолчанию. Пусто — dataDir\backups\store.</summary>
+	public string BackupDestination = "";
+
 	// ------------------------------------------------------------------ уведомления
 
 	public bool NotifyEnabled;
@@ -202,6 +207,9 @@ public class Settings
 		s.UpdatesEnabled = Json.Bool(Json.Get(upd, "enabled"), s.UpdatesEnabled);
 		s.UpdatesPath = Json.GetStr(upd, "path", s.UpdatesPath);
 		s.UpdatesCheckOnStart = Json.Bool(Json.Get(upd, "checkOnStart"), s.UpdatesCheckOnStart);
+
+		Dictionary<string, object> bk = Json.AsObject(Json.Get(root, "backup"));
+		s.BackupDestination = Json.GetStr(bk, "destination", s.BackupDestination);
 
 		Dictionary<string, object> nt = Json.AsObject(Json.Get(root, "notifications"));
 		s.NotifyEnabled = Json.Bool(Json.Get(nt, "enabled"), s.NotifyEnabled);

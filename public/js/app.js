@@ -247,6 +247,7 @@
     setActiveNav();
     stopLogsPolling();
     stopHealthPolling();
+    stopBackupsPolling();
 
     if (state.route === 'month') return renderMonth();
     if (state.route === 'uptime') return renderUptime();
@@ -256,6 +257,7 @@
     if (state.route === 'manage') return renderManage();
     if (state.route === 'logs') return renderLogs();
     if (state.route === 'health') return renderHealth();
+    if (state.route === 'backups') return renderBackups();
     if (state.route === 'settings') return renderSettings();
     if (state.route === 'company') {
       if (state.sub === 'edit' || state.companyId === 'new') return renderCompanyForm(state.companyId);
@@ -3179,6 +3181,226 @@
 
     load();
     healthState.timer = setInterval(load, 15000);
+  }
+
+  // ------------------------------------------------------------------ бэкапы
+
+  var backupsState = { timer: null, engine: '', targets: [], built: false, busy: false };
+
+  function stopBackupsPolling() {
+    if (backupsState.timer) {
+      clearInterval(backupsState.timer);
+      backupsState.timer = null;
+    }
+  }
+
+  function backupStatusBadge(status) {
+    var map = {
+      pending: ['s-NODATA', 'в очереди'],
+      running: ['s-SKIP', 'выполняется'],
+      done: ['s-OK', 'готово'],
+      failed: ['s-FAIL', 'ошибка'],
+      cancelled: ['s-SKIP', 'отменено']
+    };
+    var m = map[status] || ['s-NODATA', status];
+    return '<span class="badge ' + m[0] + '">' + esc(m[1]) + '</span>';
+  }
+
+  function renderBackups() {
+    view.innerHTML = '<div class="muted">Загрузка…</div>';
+    stopBackupsPolling();
+    backupsState.built = false;
+
+    api('/api/backup/engines').then(function (data) {
+      var engines = (data.engines || []).filter(function (e) { return e.available; });
+      var all = data.engines || [];
+
+      var html = '<h2 class="page-title"><i class="fas fa-box-archive"></i> Бэкапы</h2>';
+
+      if (!engines.length) {
+        html += '<div class="card"><div class="card-body">' +
+          '<p style="margin:0 0 8px"><strong>Нет доступных движков резервного копирования.</strong></p>' +
+          '<ul style="margin:0;padding-left:18px" class="muted">' +
+          all.map(function (e) { return '<li>' + esc(e.title) + ' — ' + esc(e.reason || 'недоступен') + '</li>'; }).join('') +
+          '</ul></div></div>';
+        view.innerHTML = html;
+        return;
+      }
+
+      if (!backupsState.engine) backupsState.engine = engines[0].name;
+
+      // --- запуск
+      html += '<div class="card"><div class="card-head"><i class="fas fa-play"></i> Новое задание' +
+        '<span class="spacer"></span><span class="muted" style="font-size:11px" id="bk-avail"></span>' +
+        '</div><div class="card-body">';
+
+      if (engines.length > 1) {
+        html += '<label class="fld"><span>Движок</span><select id="bk-engine">' +
+          engines.map(function (e) {
+            return '<option value="' + esc(e.name) + '"' + (e.name === backupsState.engine ? ' selected' : '') + '>' +
+              esc(e.title) + '</option>';
+          }).join('') + '</select></label>';
+      }
+
+      html += '<div class="form-grid">' +
+        '<label class="fld"><span>Объект</span><select id="bk-target"><option value="">загрузка…</option></select></label>' +
+        '<label class="fld"><span>Каталог назначения</span>' +
+        '<input type="text" id="bk-dest" placeholder="по умолчанию — из настроек"></label>' +
+        '</div>';
+
+      html += '<div class="cfg-actions" style="margin-top:10px">' +
+        '<button class="btn btn-sm btn-primary" id="bk-run"><i class="fas fa-play"></i> Запустить</button>' +
+        '<button class="btn btn-sm" id="bk-refresh-targets"><i class="fas fa-sync-alt"></i> Обновить список</button>' +
+        '<span class="spacer"></span>' +
+        '<span class="muted" style="font-size:11.5px">задание выполняется в фоне, страницу можно закрыть</span>' +
+        '</div>';
+
+      html += '<div id="bk-run-result"></div>';
+
+      // подсказка о движке
+      var eng = null;
+      for (var i = 0; i < all.length; i++) { if (all[i].name === backupsState.engine) { eng = all[i]; break; } }
+      if (eng && eng.description) {
+        html += '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' + esc(eng.description) + '</p>';
+      }
+      html += '</div></div>';
+
+      // --- задания
+      html += '<div class="card"><div class="card-head"><i class="fas fa-list-check"></i> Задания' +
+        '<span class="spacer"></span><span class="muted" style="font-size:11px" id="bk-count"></span>' +
+        '</div><div class="card-body" style="padding:0"><div id="bk-jobs">' +
+        '<div style="padding:16px" class="muted">Загрузка…</div></div></div></div>';
+
+      view.innerHTML = html;
+      backupsState.built = true;
+
+      loadBackupTargets();
+
+      document.getElementById('bk-refresh-targets').addEventListener('click', loadBackupTargets);
+
+      var engSel = document.getElementById('bk-engine');
+      if (engSel) {
+        engSel.addEventListener('change', function () {
+          backupsState.engine = this.value;
+          loadBackupTargets();
+        });
+      }
+
+      document.getElementById('bk-run').addEventListener('click', function () {
+        var target = document.getElementById('bk-target').value;
+        var dest = document.getElementById('bk-dest').value.trim();
+        if (!target) { toast('Выберите объект копирования', 'error'); return; }
+        var btn = this;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Ставлю в очередь…';
+        api('/api/backup/run', {
+          method: 'POST',
+          body: { engine: backupsState.engine, target: target, destination: dest }
+        }).then(function (r) {
+          toast('Задание поставлено в очередь', 'ok');
+          document.getElementById('bk-run-result').innerHTML =
+            '<div class="cfg-note ok"><i class="fas fa-check-circle"></i> ' +
+            'Задание <code>' + esc(r.job.id) + '</code> для «' + esc(r.job.target) + '» в очереди</div>';
+          loadBackupJobs();
+        }).catch(function (err) {
+          document.getElementById('bk-run-result').innerHTML =
+            '<div class="cfg-note error">' + esc(err.message) + '</div>';
+        }).then(function () {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-play"></i> Запустить';
+        });
+      });
+
+      loadBackupJobs();
+      backupsState.timer = setInterval(loadBackupJobs, 2000);
+    }).catch(function (err) {
+      view.innerHTML = '<div class="card"><div class="card-body">Ошибка: ' + esc(err.message) + '</div></div>';
+    });
+  }
+
+  function loadBackupTargets() {
+    var sel = document.getElementById('bk-target');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">загрузка…</option>';
+    api('/api/backup/targets?engine=' + encodeURIComponent(backupsState.engine)).then(function (data) {
+      var targets = data.targets || [];
+      if (!targets.length) {
+        sel.innerHTML = '<option value="">нет доступных объектов</option>';
+        if (data.error) {
+          var avail = document.getElementById('bk-avail');
+          if (avail) avail.textContent = data.error;
+        }
+        return;
+      }
+      sel.innerHTML = targets.map(function (t) {
+        return '<option value="' + esc(t.name) + '">' + esc(t.name) +
+          ' — ' + esc(t.state) + (t.running ? ' (работает)' : '') + '</option>';
+      }).join('');
+    }).catch(function (err) {
+      sel.innerHTML = '<option value="">ошибка: ' + esc(err.message) + '</option>';
+    });
+  }
+
+  function loadBackupJobs() {
+    if (backupsState.busy) return;
+    backupsState.busy = true;
+    api('/api/backup/jobs').then(function (data) {
+      var jobs = data.jobs || [];
+      var box = document.getElementById('bk-jobs');
+      var cnt = document.getElementById('bk-count');
+      if (!box) return;
+
+      if (cnt) {
+        var active = jobs.filter(function (j) { return j.status === 'running' || j.status === 'pending'; }).length;
+        cnt.textContent = jobs.length ? ('всего ' + jobs.length + (active ? ', активных ' + active : '')) : '';
+      }
+
+      if (!jobs.length) {
+        box.innerHTML = '<div style="padding:16px" class="muted">Заданий ещё не было.</div>';
+        return;
+      }
+
+      var html = '<table class="journal-table"><thead><tr>' +
+        '<th>Объект</th><th>Движок</th><th>Состояние</th><th style="width:160px">Прогресс</th>' +
+        '<th>Размер</th><th>Начато</th><th style="width:70px"></th>' +
+        '</tr></thead><tbody>';
+
+      jobs.forEach(function (j) {
+        var active = j.status === 'running' || j.status === 'pending';
+        var pct = j.progress || 0;
+        html += '<tr>' +
+          '<td><strong>' + esc(j.target) + '</strong>' +
+            (j.error ? '<div class="muted" style="font-size:11px;color:var(--fail)">' + esc(j.error) + '</div>' : '') +
+            (j.message && !j.error ? '<div class="muted" style="font-size:11px">' + esc(j.message) + '</div>' : '') +
+          '</td>' +
+          '<td><code style="font-size:11px">' + esc(j.engine) + '</code></td>' +
+          '<td>' + backupStatusBadge(j.status) + '</td>' +
+          '<td><div class="bar"><i style="width:' + pct + '%"></i></div>' +
+            '<span class="muted" style="font-size:11px">' + pct + '%</span></td>' +
+          '<td>' + (j.sizeBytes ? fmtSize(j.sizeBytes) : '—') + '</td>' +
+          '<td class="muted" style="font-size:11.5px">' + esc(fmtDateTime(j.createdAt)) + '</td>' +
+          '<td>' + (active ? '<button class="btn btn-sm" data-cancel="' + esc(j.id) + '" title="Отменить">' +
+            '<i class="fas fa-stop"></i></button>' : '') + '</td>' +
+          '</tr>';
+      });
+
+      html += '</tbody></table>';
+      box.innerHTML = html;
+
+      $$('[data-cancel]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-cancel');
+          if (!confirm('Отменить задание? Уже скопированные файлы останутся на диске.')) return;
+          api('/api/backup/cancel', { method: 'POST', body: { id: id } })
+            .then(function () { toast('Отмена запрошена', 'ok'); loadBackupJobs(); })
+            .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); });
+        });
+      });
+    }).catch(function () {
+      // тихо: следующая попытка через 2 секунды
+    }).then(function () {
+      backupsState.busy = false;
+    });
   }
 
   // ------------------------------------------------------------------ форма компании

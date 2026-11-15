@@ -96,7 +96,6 @@ netsh http add urlacl url=http://+:8080/ user="NT AUTHORITY\SYSTEM"
 [ARCHITECTURE.md](ARCHITECTURE.md#уведомления).
 
 ### `history` и `updates`
-
 | Ключ | По умолчанию | Описание |
 |---|---|---|
 | `history.journalKeepDays` | `400` | сколько дней хранить подробный журнал прогонов |
@@ -105,6 +104,7 @@ netsh http add urlacl url=http://+:8080/ user="NT AUTHORITY\SYSTEM"
 | `updates.enabled` | `false` | включить проверку обновлений |
 | `updates.path` | — | каталог или сетевая папка с `latest.json` |
 | `updates.checkOnStart` | `true` | проверять при старте |
+| `backup.destination` | — | куда складывать бэкапы по умолчанию (пусто — `dataDir\backups\store`) |
 
 Подробности — в [ARCHITECTURE.md](ARCHITECTURE.md#хранение-истории-и-обновления).
 

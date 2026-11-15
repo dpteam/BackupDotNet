@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using BackupDotNet.Core;
+using BackupDotNet.Core.Backup;
 using BackupDotNet.Deploy;
 using BackupDotNet.Manage;
 
@@ -36,13 +37,15 @@ public class ApiHandler
 
 	private readonly string _prefix;
 
+	private readonly BackupJobQueue _backups;
+
 	private static readonly Dictionary<char, string> Translit = BuildTranslit();
 
 	private static readonly Regex UserNameRe = new Regex("^[a-zA-Z0-9._-]{2,32}$", RegexOptions.Compiled);
 
 	private string CompaniesDir => Path.Combine(_settings.ConfigDir, "companies");
 
-	public ApiHandler(Settings settings, ConfigLoader config, DataStore store, Scheduler scheduler, Auth auth, AuditLog audit, AgentRegistry agents, DeployManager deploy, OpQueue ops, string prefix)
+	public ApiHandler(Settings settings, ConfigLoader config, DataStore store, Scheduler scheduler, Auth auth, AuditLog audit, AgentRegistry agents, DeployManager deploy, OpQueue ops, string prefix, BackupJobQueue backups)
 	{
 		_settings = settings;
 		_config = config;
@@ -54,6 +57,7 @@ public class ApiHandler
 		_deploy = deploy;
 		_ops = ops;
 		_prefix = prefix ?? "";
+		_backups = backups;
 	}
 
 	public void Handle(HttpListenerContext ctx)
@@ -146,6 +150,15 @@ public class ApiHandler
 				return;
 			case "/api/updates":
 				HandleUpdates(ctx, session);
+				return;
+			case "/api/backup/engines":
+				HandleBackupEngines(ctx, session);
+				return;
+			case "/api/backup/targets":
+				HandleBackupTargets(ctx, session);
+				return;
+			case "/api/backup/jobs":
+				HandleBackupJobs(ctx, session);
 				return;			case "/api/users":
 				if (method == "GET")
 				{
@@ -219,6 +232,16 @@ public class ApiHandler
 			if (path == "/api/history/prune" && method == "POST")
 			{
 				HandleHistoryPrune(ctx, session);
+				return;
+			}
+			if (path == "/api/backup/run" && method == "POST")
+			{
+				HandleBackupRun(ctx, session);
+				return;
+			}
+			if (path == "/api/backup/cancel" && method == "POST")
+			{
+				HandleBackupCancel(ctx, session);
 				return;
 			}
 			if (path.StartsWith("/api/company/"))
@@ -1025,6 +1048,167 @@ public class ApiHandler
 		string current = (_scheduler != null) ? _scheduler.Version : "";
 		UpdateChecker.Result r = UpdateChecker.Check(_settings, current);
 		WriteJson(ctx, r.ToJson(), 200);
+	}
+
+	/// <summary>
+	/// GET /api/backup/engines — какие движки бэкапа доступны на этой машине.
+	/// Недоступный движок показывается с причиной: «нет прав» полезнее, чем пустота.
+	/// </summary>
+	private void HandleBackupEngines(HttpListenerContext ctx, SessionInfo si)
+	{
+		List<object> list = new List<object>();
+		foreach (IBackupEngine e in BackupEngines.All)
+		{
+			Dictionary<string, object> d = Json.Obj();
+			d["name"] = e.Name;
+			d["title"] = e.Title;
+			d["description"] = e.Description;
+			string reason;
+			bool ok = e.IsAvailable(out reason);
+			d["available"] = ok;
+			d["reason"] = reason ?? "";
+			list.Add(d);
+		}
+		Dictionary<string, object> res = Json.Obj();
+		res["engines"] = list;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// GET /api/backup/targets?engine=hyperv-export — что можно скопировать.
+	/// </summary>
+	private void HandleBackupTargets(HttpListenerContext ctx, SessionInfo si)
+	{
+		string engine = Query(ctx, "engine");
+		if (engine.Length == 0)
+		{
+			engine = "hyperv-export";
+		}
+		IBackupEngine e = BackupEngines.Get(engine);
+		if (e == null)
+		{
+			WriteJson(ctx, Json.Obj("error", "неизвестный движок: " + engine), 404);
+			return;
+		}
+		HyperVExportEngine hv = e as HyperVExportEngine;
+		if (hv == null)
+		{
+			WriteJson(ctx, Json.Obj("error", "движок не поддерживает список объектов"), 400);
+			return;
+		}
+		string error;
+		List<Dictionary<string, object>> targets = hv.ListTargets(out error);
+		Dictionary<string, object> res = Json.Obj();
+		res["engine"] = engine;
+		res["targets"] = targets;
+		if (error.Length > 0)
+		{
+			res["error"] = error;
+		}
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>GET /api/backup/jobs — очередь и история заданий.</summary>
+	private void HandleBackupJobs(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (_backups == null)
+		{
+			WriteJson(ctx, Json.Obj("error", "очередь бэкапов не инициализирована"), 503);
+			return;
+		}
+		List<object> list = new List<object>();
+		foreach (BackupJob j in _backups.List())
+		{
+			list.Add(j.ToJson());
+		}
+		Dictionary<string, object> res = Json.Obj();
+		res["jobs"] = list;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// POST /api/backup/run — поставить задание в очередь.
+	/// Требует права на запись: это действие, а не наблюдение.
+	/// </summary>
+	private void HandleBackupRun(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав для запуска бэкапа"), 403);
+			return;
+		}
+		if (_backups == null)
+		{
+			WriteJson(ctx, Json.Obj("error", "очередь бэкапов не инициализирована"), 503);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string engine = Json.GetStr(body, "engine", "hyperv-export");
+		string target = Json.GetStr(body, "target", "");
+		string dest = Json.GetStr(body, "destination", "");
+		if (dest.Length == 0)
+		{
+			dest = DefaultBackupDestination();
+		}
+
+		Dictionary<string, string> options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		Dictionary<string, object> opts = Json.AsObject(Json.Get(body, "options"));
+		foreach (KeyValuePair<string, object> kv in opts)
+		{
+			options[kv.Key] = Json.Str(kv.Value);
+		}
+
+		string error;
+		BackupJob job = _backups.Enqueue(engine, target, dest, options, si.User, out error);
+		if (job == null)
+		{
+			WriteJson(ctx, Json.Obj("error", error), 400);
+			return;
+		}
+		_audit.Write(si.User, "backup.run", job.Id + " " + engine + " " + target + " → " + dest, ClientIp(ctx));
+		Dictionary<string, object> res = Json.Obj();
+		res["ok"] = true;
+		res["job"] = job.ToJson();
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>POST /api/backup/cancel — попросить задание остановиться.</summary>
+	private void HandleBackupCancel(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		if (_backups == null)
+		{
+			WriteJson(ctx, Json.Obj("error", "очередь бэкапов не инициализирована"), 503);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string id = Json.GetStr(body, "id", "");
+		string error;
+		bool ok = _backups.Cancel(id, out error);
+		if (!ok)
+		{
+			WriteJson(ctx, Json.Obj("error", error), 400);
+			return;
+		}
+		_audit.Write(si.User, "backup.cancel", id, ClientIp(ctx));
+		WriteJson(ctx, Json.Obj("ok", true), 200);
+	}
+
+	/// <summary>
+	/// Куда складывать бэкапы по умолчанию: <c>backupDestination</c> из настроек,
+	/// иначе <c>&lt;dataDir&gt;\backups\store</c>.
+	/// </summary>
+	private string DefaultBackupDestination()
+	{
+		if (!string.IsNullOrWhiteSpace(_settings.BackupDestination))
+		{
+			return _settings.BackupDestination;
+		}
+		return Path.Combine(_settings.DataDir, "backups", "store");
 	}
 
 	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)

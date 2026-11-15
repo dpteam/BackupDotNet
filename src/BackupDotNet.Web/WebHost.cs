@@ -5,6 +5,7 @@ using System.Net;
 using System.Text;
 using System.Threading;
 using BackupDotNet.Core;
+using BackupDotNet.Core.Backup;
 using BackupDotNet.Deploy;
 using BackupDotNet.Manage;
 
@@ -38,6 +39,8 @@ public class WebHost
 
 	public readonly OpQueue Ops;
 
+	public readonly BackupJobQueue Backups;
+
 	public WebHost(Settings settings, ConfigLoader config, DataStore store, Scheduler scheduler, Auth auth, AuditLog audit)
 	{
 		_settings = settings;
@@ -54,6 +57,7 @@ public class WebHost
 		}
 		Deploy = new DeployManager(settings, config, Agents);
 		Ops = new OpQueue(settings, config);
+		Backups = new BackupJobQueue(settings);
 	}
 
 	public void Start()
@@ -100,11 +104,19 @@ public class WebHost
 		_thread.IsBackground = true;
 		_thread.Name = "web";
 		_thread.Start();
+		Backups.Start();
 	}
 
 	public void Stop()
 	{
 		_stopping = true;
+		try
+		{
+			Backups.Stop();
+		}
+		catch
+		{
+		}
 		try
 		{
 			if (_listener != null)
@@ -159,7 +171,7 @@ public class WebHost
 			string path = ctx.Request.Url.AbsolutePath;
 			if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
 			{
-				new ApiHandler(_settings, _config, _store, _scheduler, _auth, _audit, Agents, Deploy, Ops, ActualPrefix).Handle(ctx);
+				new ApiHandler(_settings, _config, _store, _scheduler, _auth, _audit, Agents, Deploy, Ops, ActualPrefix, Backups).Handle(ctx);
 			}
 			else
 			{

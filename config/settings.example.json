@@ -55,6 +55,9 @@
     "rollupKeepMonths": 60,
     "autoPrune": true
   },
+  "backup": {
+    "destination": ""
+  },
   "updates": {
     "enabled": false,
     "path": "\\\\fileserver\\BackupDotNet\\latest",
