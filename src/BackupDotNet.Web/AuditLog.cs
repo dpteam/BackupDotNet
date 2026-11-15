@@ -50,6 +50,16 @@ public class AuditLog
 
 	public List<object> Read(int limit)
 	{
+		return Read(limit, "", "");
+	}
+
+	/// <summary>
+	/// Читает журнал за последние месяцы, свежие записи первыми.
+	/// <paramref name="actionFilter"/> — подстрока действия (например, <c>backup.</c>),
+	/// <paramref name="userFilter"/> — имя пользователя.
+	/// </summary>
+	public List<object> Read(int limit, string actionFilter, string userFilter)
+	{
 		if (limit <= 0 || limit > 2000)
 		{
 			limit = 200;
@@ -57,35 +67,94 @@ public class AuditLog
 		List<object> result = new List<object>();
 		lock (_sync)
 		{
-			string month = DateTime.Now.ToString("yyyy-MM", CultureInfo.InvariantCulture);
-			string path = Path.Combine(_dir, month + ".ndjson");
-			if (!File.Exists(path))
+			// Журнал разложен по месяцам. Читаем текущий и предыдущий: чаще
+			// «кто это сделал» ищут в пределах пары недель, а не за год.
+			List<string> months = new List<string>();
+			DateTime now = DateTime.Now;
+			for (int i = 0; i < 3; i++)
 			{
-				return result;
+				months.Add(now.AddMonths(-i).ToString("yyyy-MM", CultureInfo.InvariantCulture));
 			}
-			try
+
+			foreach (string month in months)
 			{
-				string[] lines = File.ReadAllLines(path);
-				int i = lines.Length - 1;
-				while (i >= 0 && result.Count < limit)
+				if (result.Count >= limit)
 				{
-					if (lines[i].Length >= 3)
-					{
-						try
-						{
-							result.Add(Json.ParseObject(lines[i]));
-						}
-						catch
-						{
-						}
-					}
-					i--;
+					break;
 				}
-			}
-			catch
-			{
+				string path = Path.Combine(_dir, month + ".ndjson");
+				if (!File.Exists(path))
+				{
+					continue;
+				}
+				try
+				{
+					string[] lines = File.ReadAllLines(path);
+					int i = lines.Length - 1;
+					while (i >= 0 && result.Count < limit)
+					{
+						if (lines[i].Length >= 3)
+						{
+							try
+							{
+								Dictionary<string, object> row = Json.ParseObject(lines[i]);
+								if (Matches(row, actionFilter, userFilter))
+								{
+									result.Add(row);
+								}
+							}
+							catch
+							{
+							}
+						}
+						i--;
+					}
+				}
+				catch
+				{
+				}
 			}
 		}
 		return result;
+	}
+
+	private static bool Matches(Dictionary<string, object> row, string actionFilter, string userFilter)
+	{
+		if (!string.IsNullOrEmpty(actionFilter))
+		{
+			string action = Json.GetStr(row, "action", "");
+			if (action.IndexOf(actionFilter, StringComparison.OrdinalIgnoreCase) < 0)
+			{
+				return false;
+			}
+		}
+		if (!string.IsNullOrEmpty(userFilter))
+		{
+			string user = Json.GetStr(row, "user", "");
+			if (user.IndexOf(userFilter, StringComparison.OrdinalIgnoreCase) < 0)
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/// <summary>Список доступных месяцев журнала — для выбора в интерфейсе.</summary>
+	public List<string> Months()
+	{
+		List<string> list = new List<string>();
+		try
+		{
+			foreach (string f in Directory.GetFiles(_dir, "*.ndjson"))
+			{
+				list.Add(Path.GetFileNameWithoutExtension(f));
+			}
+		}
+		catch
+		{
+		}
+		list.Sort();
+		list.Reverse();
+		return list;
 	}
 }

@@ -259,6 +259,7 @@
     if (state.route === 'health') return renderHealth();
     if (state.route === 'backups') return renderBackups();
     if (state.route === 'inventory') return renderInventory();
+    if (state.route === 'audit') return renderAudit();
     if (state.route === 'settings') return renderSettings();
     if (state.route === 'company') {
       if (state.sub === 'edit' || state.companyId === 'new') return renderCompanyForm(state.companyId);
@@ -3897,7 +3898,17 @@
       '<input type="text" id="inv-filter" class="inv-filter" placeholder="фильтр по имени…" value="' + esc(invState.filter) + '">' +
       '</div><div class="card-body" style="padding:0"><div id="inv-list"></div></div></div>';
 
+    // --- гигиена
+    html += '<div class="card"><div class="card-head"><i class="fas fa-broom"></i> Гигиена' +
+      '<span class="spacer"></span>' +
+      '<span class="muted" style="font-size:11px" id="hyg-summary"></span>' +
+      '</div><div class="card-body" id="hyg-box">' +
+      '<div class="muted"><i class="fas fa-spinner fa-spin"></i> осматриваю диски и снимки — это занимает несколько секунд…' +
+      '</div></div></div>';
+
     view.innerHTML = html;
+
+    loadHygiene();
 
     document.getElementById('inv-refresh').addEventListener('click', function () {
       var btn = this;
@@ -3979,6 +3990,208 @@
         '<td>' + snap + '</td>' +
         '<td style="font-size:11.5px">' + (v.ip ? '<code>' + esc(v.ip) + '</code>' : '<span class="muted">—</span>') + '</td>' +
         '<td class="muted" style="font-size:11.5px">' + fmtUptimeShort(v.uptimeHours) + '</td>' +
+        '</tr>';
+    });
+
+    html += '</tbody></table>';
+    box.innerHTML = html;
+  }
+
+  /** Гигиена: сироты, старые снимки, давно выключенные ВМ. */
+  function loadHygiene() {
+    var box = document.getElementById('hyg-box');
+    if (!box) return;
+
+    api('/api/hygiene').then(function (h) {
+      var summary = document.getElementById('hyg-summary');
+      var problems = (h.orphanCount || 0) + (h.snapshotCount || 0) + (h.stoppedCount || 0);
+      if (summary) {
+        summary.textContent = problems
+          ? 'замечаний: ' + problems
+          : 'всё чисто';
+      }
+
+      if (!problems && !(h.largeVms || []).length) {
+        box.innerHTML = '<div class="hyg-ok"><i class="fas fa-check-circle"></i> ' +
+          'Сирот, старых снимков и давно выключенных ВМ не найдено.</div>';
+        return;
+      }
+
+      var html = '';
+
+      if (h.orphanCount > 0) {
+        html += '<div class="hyg-group">' +
+          '<div class="hyg-title fail"><i class="fas fa-hard-drive"></i> Диски-сироты: ' +
+          h.orphanCount + ' · ' + fmtSize(h.orphanBytes) + '</div>' +
+          '<p class="muted" style="font-size:11.5px;margin:2px 0 6px">' +
+          'Файлы образов, не привязанные ни к одной ВМ. Обычно остаются после удаления машины.</p>' +
+          '<table class="cfg-table"><tbody>' +
+          (h.orphanDisks || []).map(function (d) {
+            return '<tr><td><code>' + esc(d.fileName) + '</code>' +
+              '<div class="muted" style="font-size:10.5px">' + esc(d.path) + '</div></td>' +
+              '<td style="white-space:nowrap">' + fmtSize(d.sizeBytes) + '</td>' +
+              '<td class="muted" style="font-size:11px;white-space:nowrap">' + esc(fmtDate(d.modified)) + '</td></tr>';
+          }).join('') +
+          '</tbody></table></div>';
+      }
+
+      if (h.snapshotCount > 0) {
+        html += '<div class="hyg-group">' +
+          '<div class="hyg-title warn"><i class="fas fa-camera"></i> Старые снимки: ' + h.snapshotCount + '</div>' +
+          '<p class="muted" style="font-size:11.5px;margin:2px 0 6px">' +
+          'Снимки старше ' + (h.snapshotDays || 30) + ' дней. Чем дольше живёт снимок, тем дороже откат.</p>' +
+          '<table class="cfg-table"><tbody>' +
+          (h.oldSnapshots || []).map(function (s) {
+            return '<tr><td>' + esc(s.name || '(без имени)') + '</td>' +
+              '<td class="muted" style="white-space:nowrap">' +
+              (s.ageDays != null ? s.ageDays + ' дн' : 'возраст неизвестен') + '</td></tr>';
+          }).join('') +
+          '</tbody></table></div>';
+      }
+
+      if (h.stoppedCount > 0) {
+        html += '<div class="hyg-group">' +
+          '<div class="hyg-title"><i class="fas fa-power-off"></i> Давно выключены: ' + h.stoppedCount + '</div>' +
+          '<p class="muted" style="font-size:11.5px;margin:2px 0 6px">' +
+          'Выключены дольше ' + (h.stoppedDays || 90) + ' дней — возможно, машина больше не нужна.</p>' +
+          '<table class="cfg-table"><tbody>' +
+          (h.stoppedVms || []).map(function (v) {
+            return '<tr><td>' + esc(v.name) + '</td>' +
+              '<td class="muted" style="white-space:nowrap">' +
+              (v.daysStopped != null ? Math.round(v.daysStopped) + ' дн' : '—') + '</td>' +
+              '<td style="white-space:nowrap">' + fmtSize(v.diskBytes) + '</td></tr>';
+          }).join('') +
+          '</tbody></table></div>';
+      }
+
+      if ((h.largeVms || []).length) {
+        html += '<div class="hyg-group">' +
+          '<div class="hyg-title"><i class="fas fa-database"></i> Крупные ВМ (больше 100 ГБ)</div>' +
+          '<table class="cfg-table"><tbody>' +
+          h.largeVms.map(function (v) {
+            return '<tr><td>' + esc(v.name) + '</td>' +
+              '<td style="white-space:nowrap">' + fmtSize(v.diskBytes) + '</td></tr>';
+          }).join('') +
+          '</tbody></table></div>';
+      }
+
+      html += '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' +
+        'Ничего не удаляется автоматически: удаление файлов — решение человека.</p>';
+
+      box.innerHTML = html;
+    }).catch(function (err) {
+      box.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
+    });
+  }
+
+  // ------------------------------------------------------------------ аудит
+
+  var auditState = { limit: 200, action: '', user: '', rows: [] };
+
+  var ACTION_NAMES = {
+    'login': 'вход',
+    'logout': 'выход',
+    'password.change': 'смена пароля',
+    'branding.save': 'правка брендинга',
+    'config.export': 'экспорт конфигурации',
+    'config.import': 'импорт конфигурации',
+    'history.prune': 'очистка истории',
+    'notify.test': 'тест уведомлений',
+    'backup.run': 'запуск бэкапа',
+    'backup.cancel': 'отмена бэкапа',
+    'backup.verify': 'проверка копии',
+    'backup.retention': 'уборка копий',
+    'backup.schedule.save': 'сохранение расписания',
+    'backup.schedule.delete': 'удаление расписания',
+    'backup.schedule.run': 'запуск расписания'
+  };
+
+  function renderAudit() {
+    view.innerHTML = '<div class="muted">Загрузка…</div>';
+
+    function load() {
+      var q = '/api/audit/list?limit=' + auditState.limit;
+      if (auditState.action) q += '&action=' + encodeURIComponent(auditState.action);
+      if (auditState.user) q += '&user=' + encodeURIComponent(auditState.user);
+
+      api(q).then(function (data) {
+        auditState.rows = data.rows || [];
+
+        var html = '<h2 class="page-title"><i class="fas fa-user-shield"></i> Аудит действий</h2>';
+
+        html += '<div class="card"><div class="card-head"><i class="fas fa-filter"></i> Фильтр' +
+          '<span class="spacer"></span><span class="muted" style="font-size:11px">записей: ' +
+          (data.count || 0) + '</span></div><div class="card-body">' +
+          '<div class="cfg-actions">' +
+          '<label class="fld" style="margin:0"><span>Действие</span>' +
+          '<input type="text" id="au-action" value="' + esc(auditState.action) +
+          '" placeholder="backup. / login / config." style="min-width:200px"></label>' +
+          '<label class="fld" style="margin:0"><span>Пользователь</span>' +
+          '<input type="text" id="au-user" value="' + esc(auditState.user) +
+          '" placeholder="admin" style="min-width:140px"></label>' +
+          '<label class="fld" style="margin:0"><span>Записей</span>' +
+          '<select id="au-limit">' +
+          [100, 200, 500, 1000].map(function (n) {
+            return '<option value="' + n + '"' + (n === auditState.limit ? ' selected' : '') + '>' + n + '</option>';
+          }).join('') + '</select></label>' +
+          '<span class="spacer"></span>' +
+          '<button class="btn btn-sm btn-primary" id="au-apply"><i class="fas fa-search"></i> Показать</button>' +
+          '</div>' +
+          '<p class="muted" style="font-size:11.5px;margin:8px 0 0">' +
+          'Журнал хранится по месяцам, показываются последние три.</p>' +
+          '</div></div>';
+
+        html += '<div class="card"><div class="card-head"><i class="fas fa-list"></i> Записи</div>' +
+          '<div class="card-body" style="padding:0"><div id="au-list"></div></div></div>';
+
+        view.innerHTML = html;
+
+        document.getElementById('au-apply').addEventListener('click', function () {
+          auditState.action = document.getElementById('au-action').value.trim();
+          auditState.user = document.getElementById('au-user').value.trim();
+          auditState.limit = parseInt(document.getElementById('au-limit').value, 10) || 200;
+          load();
+        });
+
+        drawAuditRows();
+      }).catch(function (err) {
+        view.innerHTML = '<div class="card"><div class="card-body">Ошибка: ' + esc(err.message) + '</div></div>';
+      });
+    }
+
+    load();
+  }
+
+  function drawAuditRows() {
+    var box = document.getElementById('au-list');
+    if (!box) return;
+    var rows = auditState.rows || [];
+
+    if (!rows.length) {
+      box.innerHTML = '<div style="padding:16px" class="muted">Записей нет.</div>';
+      return;
+    }
+
+    var html = '<table class="journal-table"><thead><tr>' +
+      '<th style="width:130px">Когда</th><th style="width:110px">Пользователь</th>' +
+      '<th>Действие</th><th>Объект</th><th>Подробности</th>' +
+      '</tr></thead><tbody>';
+
+    rows.forEach(function (r) {
+      var act = r.action || '';
+      var label = ACTION_NAMES[act] || act;
+      var cls = act.indexOf('backup') === 0 ? 's-SKIP'
+        : (act.indexOf('delete') >= 0 || act.indexOf('prune') >= 0 ? 's-FAIL' : 's-NODATA');
+
+      html += '<tr>' +
+        '<td class="muted" style="font-size:11.5px;white-space:nowrap">' + esc(fmtDateTime(r.ts)) + '</td>' +
+        '<td><strong>' + esc(r.user || '—') + '</strong></td>' +
+        '<td><span class="badge ' + cls + '">' + esc(label) + '</span>' +
+          (label !== act && act.indexOf('.') > 0
+            ? '<div class="muted" style="font-size:10px">' + esc(act) + '</div>'
+            : '') + '</td>' +
+        '<td style="font-size:11.5px">' + (r.target ? '<code>' + esc(r.target) + '</code>' : '<span class="muted">—</span>') + '</td>' +
+        '<td class="muted" style="font-size:11.5px">' + esc(r.detail || '') + '</td>' +
         '</tr>';
     });
 
@@ -6420,6 +6633,12 @@
     if (navLogs) {
       if (me && me.canManageUsers) navLogs.classList.remove('hidden');
       else navLogs.classList.add('hidden');
+    }
+
+    var navAudit = document.getElementById('nav-audit');
+    if (navAudit) {
+      if (me && me.canManageUsers) navAudit.classList.remove('hidden');
+      else navAudit.classList.add('hidden');
     }
   }
 

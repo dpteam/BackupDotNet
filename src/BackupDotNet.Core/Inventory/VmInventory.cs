@@ -174,12 +174,13 @@ public static class VmInventory
 					long memMax = -1L;
 					int generation = 0;
 					string version = "";
+					string configRoot = "";
 					List<object> disks = new List<object>();
 					List<object> adapters = new List<object>();
 					long diskBytes = 0L;
 
 					ReadSettings(o, out cpu, out memMb, out dynamicMem, out memStartup, out memMax,
-						out generation, out version, disks, adapters, ref diskBytes);
+						out generation, out version, out configRoot, disks, adapters, ref diskBytes);
 
 					vm["cpu"] = cpu;
 					vm["memoryMb"] = memMb;
@@ -188,6 +189,7 @@ public static class VmInventory
 					vm["dynamicMemory"] = dynamicMem;
 					vm["generation"] = generation;
 					vm["version"] = version;
+					vm["configRoot"] = configRoot;
 					vm["disks"] = disks;
 					vm["adapters"] = adapters;
 					vm["diskBytes"] = diskBytes;
@@ -222,7 +224,7 @@ public static class VmInventory
 
 	private static void ReadSettings(ManagementBaseObject vmObject, out long cpu, out long memMb,
 		out bool dynamicMem, out long memStartup, out long memMax, out int generation, out string version,
-		List<object> disks, List<object> adapters, ref long diskBytes)
+		out string configRoot, List<object> disks, List<object> adapters, ref long diskBytes)
 	{
 		cpu = -1L;
 		memMb = -1L;
@@ -231,6 +233,7 @@ public static class VmInventory
 		memMax = -1L;
 		generation = 0;
 		version = "";
+		configRoot = "";
 
 		if (!(vmObject is ManagementObject mo))
 		{
@@ -268,6 +271,7 @@ public static class VmInventory
 				generation = 1;
 			}
 			version = Hw.Prop(current, "Version");
+			configRoot = Hw.Prop(current, "ConfigurationDataRoot");
 
 			foreach (ManagementObject mem in current.GetRelated("Msvm_MemorySettingData"))
 			{

@@ -166,6 +166,12 @@ public class ApiHandler
 				return;
 			case "/api/inventory":
 				HandleInventory(ctx, session);
+				return;
+			case "/api/audit/list":
+				HandleAuditList(ctx, session);
+				return;
+			case "/api/hygiene":
+				HandleHygiene(ctx, session);
 				return;			case "/api/users":
 				if (method == "GET")
 				{
@@ -1550,6 +1556,62 @@ public class ApiHandler
 		{
 			res["error"] = vmError;
 		}
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// GET /api/audit/list?limit=200&amp;action=backup.&amp;user=admin — журнал действий.
+	/// Только администратор: там видно, кто что удалял.
+	/// </summary>
+	private void HandleAuditList(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		int limit = Json.Int(Query(ctx, "limit"), 200);
+		string action = Query(ctx, "action").Trim();
+		string user = Query(ctx, "user").Trim();
+		List<object> rows = _audit.Read(limit, action, user);
+		Dictionary<string, object> res = Json.Obj();
+		res["rows"] = rows;
+		res["count"] = rows.Count;
+		res["months"] = ToList(_audit.Months());
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// GET /api/hygiene?snapshotDays=30&amp;stoppedDays=90 — сироты, старые снимки,
+	/// давно выключенные ВМ. Ничего не удаляет: только показывает.
+	/// </summary>
+	private void HandleHygiene(HttpListenerContext ctx, SessionInfo si)
+	{
+		int snapshotDays = Json.Int(Query(ctx, "snapshotDays"), 30);
+		int stoppedDays = Json.Int(Query(ctx, "stoppedDays"), 90);
+
+		// Где искать сирот: каталог бэкапов и корни дисков ВМ.
+		List<string> roots = new List<string>();
+		string backupRoot = DefaultBackupDestination();
+		if (!string.IsNullOrEmpty(backupRoot))
+		{
+			roots.Add(Path.GetDirectoryName(backupRoot) ?? backupRoot);
+		}
+
+		VmHygiene.Report report;
+		try
+		{
+			report = VmHygiene.Inspect(snapshotDays, stoppedDays, roots);
+		}
+		catch (Exception ex)
+		{
+			Log.Error("Гигиена: " + ex.Message, ex);
+			WriteJson(ctx, Json.Obj("error", "не удалось осмотреть хост: " + ex.Message), 500);
+			return;
+		}
+		Dictionary<string, object> res = report.ToJson();
+		res["snapshotDays"] = snapshotDays;
+		res["stoppedDays"] = stoppedDays;
 		WriteJson(ctx, res, 200);
 	}
 

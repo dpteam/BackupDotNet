@@ -1182,6 +1182,20 @@ td.cell-click:active span { transform: scale(1.02); }
   tab-size: 4;
 }
 
+/* ---------------------------------------------------------------- гигиена */
+
+.hyg-ok {
+  padding: 10px 12px; border-radius: var(--radius);
+  background: var(--ok-bg); color: var(--ok); font-size: 12.5px;
+}
+.hyg-ok i { margin-right: 6px; }
+
+.hyg-group { margin-bottom: 14px; }
+.hyg-group:last-of-type { margin-bottom: 0; }
+.hyg-title { font-weight: 700; font-size: 12.5px; margin-bottom: 4px; }
+.hyg-title.fail { color: var(--fail); }
+.hyg-title.warn { color: var(--warn); }
+
 .inv-filter {
   padding: 4px 9px;
   border: 1px solid var(--border);
