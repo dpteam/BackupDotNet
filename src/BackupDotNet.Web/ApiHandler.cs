@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using BackupDotNet.Core;
 using BackupDotNet.Core.Backup;
+using BackupDotNet.Core.Inventory;
 using BackupDotNet.Deploy;
 using BackupDotNet.Manage;
 
@@ -162,6 +163,9 @@ public class ApiHandler
 				return;
 			case "/api/backup/jobs":
 				HandleBackupJobs(ctx, session);
+				return;
+			case "/api/inventory":
+				HandleInventory(ctx, session);
 				return;			case "/api/users":
 				if (method == "GET")
 				{
@@ -1467,6 +1471,85 @@ public class ApiHandler
 		Dictionary<string, object> res = Json.Obj();
 		res["destination"] = root;
 		res["results"] = results;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// GET /api/inventory?refresh=1 — инвентарь ВМ и сведения о хосте.
+	/// Кэш на 20 секунд: WMI по десятку ВМ отвечает секундами.
+	/// </summary>
+	private void HandleInventory(HttpListenerContext ctx, SessionInfo si)
+	{
+		bool force = Query(ctx, "refresh") == "1";
+		string vmError;
+		List<Dictionary<string, object>> vms = VmInventory.Vms(out vmError, force);
+		string hostError;
+		Dictionary<string, object> host = VmInventory.Host(out hostError, force);
+
+		int running = 0;
+		int stopped = 0;
+		int withSnapshots = 0;
+		long diskBytes = 0L;
+		long cpuSum = 0L;
+		long memSum = 0L;
+		foreach (Dictionary<string, object> vm in vms)
+		{
+			if (Json.Bool(Json.Get(vm, "running"), dflt: false))
+			{
+				running++;
+			}
+			else
+			{
+				stopped++;
+			}
+			if (Json.Int(Json.Get(vm, "checkpoints"), 0) > 0)
+			{
+				withSnapshots++;
+			}
+			diskBytes += Json.Long(Json.Get(vm, "diskBytes"), 0L);
+			long cpu = Json.Long(Json.Get(vm, "cpu"), 0L);
+			if (cpu > 0)
+			{
+				cpuSum += cpu;
+			}
+			long mem = Json.Long(Json.Get(vm, "memoryMb"), 0L);
+			if (mem > 0)
+			{
+				memSum += mem;
+			}
+		}
+
+		Dictionary<string, object> totals = Json.Obj();
+		totals["vms"] = vms.Count;
+		totals["running"] = running;
+		totals["stopped"] = stopped;
+		totals["withSnapshots"] = withSnapshots;
+		totals["diskBytes"] = diskBytes;
+		totals["cpuAllocated"] = cpuSum;
+		totals["memoryAllocatedMb"] = memSum;
+
+		// Переподписка: сколько vCPU и памяти выделено против физических ресурсов.
+		// Это не ошибка сама по себе (ВМ редко грузят все ядра одновременно),
+		// но соотношение выше 4:1 обычно означает, что при массовом старте
+		// машины начнут тормозить, и об этом стоит предупредить заранее.
+		long hostCores = Json.Long(Json.Get(host, "processorCount"), 0L);
+		long hostMemMb = Json.Long(Json.Get(host, "memoryTotalMb"), 0L);
+		Dictionary<string, object> over = Json.Obj();
+		over["cpuRatio"] = hostCores > 0 ? Math.Round((double)cpuSum / hostCores, 2) : 0.0;
+		over["memoryRatio"] = hostMemMb > 0 ? Math.Round((double)memSum / hostMemMb, 2) : 0.0;
+		over["cpuWarning"] = hostCores > 0 && cpuSum > hostCores * 4;
+		over["memoryWarning"] = hostMemMb > 0 && memSum > hostMemMb;
+		totals["overcommit"] = over;
+
+		Dictionary<string, object> res = Json.Obj();
+		res["host"] = host;
+		res["vms"] = vms;
+		res["totals"] = totals;
+		res["cachedAt"] = DateTime.Now;
+		if (vmError.Length > 0)
+		{
+			res["error"] = vmError;
+		}
 		WriteJson(ctx, res, 200);
 	}
 

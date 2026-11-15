@@ -258,6 +258,7 @@
     if (state.route === 'logs') return renderLogs();
     if (state.route === 'health') return renderHealth();
     if (state.route === 'backups') return renderBackups();
+    if (state.route === 'inventory') return renderInventory();
     if (state.route === 'settings') return renderSettings();
     if (state.route === 'company') {
       if (state.sub === 'edit' || state.companyId === 'new') return renderCompanyForm(state.companyId);
@@ -3793,6 +3794,196 @@
       var m = document.getElementById('verify-modal');
       if (m && m.parentNode) m.parentNode.removeChild(m);
     });
+  }
+
+  // ------------------------------------------------------------------ инвентарь ВМ
+
+  var invState = { filter: '', sort: 'name', dir: 1, data: null };
+
+  function fmtUptimeShort(hours) {
+    var h = Number(hours);
+    if (!(h >= 0)) return '—';
+    if (h < 1) return Math.round(h * 60) + ' мин';
+    var d = Math.floor(h / 24);
+    if (d > 0) return d + ' д ' + Math.round(h % 24) + ' ч';
+    return Math.round(h) + ' ч';
+  }
+
+  function renderInventory() {
+    view.innerHTML = '<div class="muted">Загрузка инвентаря…</div>';
+
+    api('/api/inventory').then(function (data) {
+      invState.data = data;
+      drawInventory();
+    }).catch(function (err) {
+      view.innerHTML = '<div class="card"><div class="card-body">Ошибка: ' + esc(err.message) + '</div></div>';
+    });
+  }
+
+  function drawInventory() {
+    var data = invState.data;
+    if (!data) return;
+
+    var t = data.totals || {};
+    var host = data.host || {};
+    var vms = data.vms || [];
+    var over = t.overcommit || {};
+
+    var html = '<h2 class="page-title"><i class="fas fa-server"></i> Инвентарь' +
+      '<span class="spacer"></span>' +
+      '<button class="btn btn-sm" id="inv-refresh"><i class="fas fa-sync-alt"></i> Обновить</button>' +
+      '</h2>';
+
+    if (data.error) {
+      html += '<div class="card" style="border-color:var(--warn)"><div class="card-body">' +
+        '<i class="fas fa-exclamation-triangle" style="color:var(--warn)"></i> ' +
+        esc(data.error) + '</div></div>';
+    }
+
+    html += '<div class="stats">' +
+      stat('', 'Виртуальных машин', t.vms, 'работает: ' + (t.running || 0) + ', выключено: ' + (t.stopped || 0)) +
+      stat(t.withSnapshots > 0 ? 'warn' : '', 'Со снимками', t.withSnapshots, 'снимки занимают место') +
+      stat(over.cpuWarning ? 'warn' : '', 'vCPU выделено', t.cpuAllocated,
+        'ядер на хосте: ' + (host.processorCount || '—') +
+        (over.cpuRatio ? ' · ' + over.cpuRatio + '×' : '')) +
+      stat(over.memoryWarning ? 'warn' : '', 'Память выделена', Math.round((t.memoryAllocatedMb || 0) / 1024) + ' ГБ',
+        'на хосте: ' + Math.round((host.memoryTotalMb || 0) / 1024) + ' ГБ' +
+        (over.memoryRatio ? ' · ' + over.memoryRatio + '×' : '')) +
+      stat('', 'Диски ВМ', fmtSize(t.diskBytes), 'суммарно на диске') +
+      '</div>';
+
+    if (over.cpuWarning || over.memoryWarning) {
+      var notes = [];
+      if (over.cpuWarning) {
+        notes.push('vCPU выделено ' + t.cpuAllocated + ' на ' + host.processorCount +
+          ' ядер хоста (' + over.cpuRatio + '×)');
+      }
+      if (over.memoryWarning) {
+        notes.push('память выделена ' + Math.round((t.memoryAllocatedMb || 0) / 1024) + ' ГБ при ' +
+          Math.round((host.memoryTotalMb || 0) / 1024) + ' ГБ на хосте');
+      }
+      html += '<div class="card" style="border-left:4px solid var(--warn)"><div class="card-body">' +
+        '<i class="fas fa-exclamation-triangle" style="color:var(--warn)"></i> ' +
+        '<strong>Переподписка ресурсов:</strong> ' + esc(notes.join('; ')) + '. ' +
+        'Само по себе не ошибка — ВМ редко грузят всё сразу, — но при массовом старте ' +
+        'машины начнут конкурировать за процессор.</div></div>';
+    }
+
+    // --- хост
+    html += '<div class="card"><div class="card-head"><i class="fas fa-microchip"></i> Хост</div><div class="card-body">' +
+      '<div class="kv">' +
+      '<div class="k">Имя</div><div><strong>' + esc(host.name) + '</strong></div>' +
+      '<div class="k">ОС</div><div>' + esc(host.os) + '</div>' +
+      '<div class="k">Процессоры</div><div>' + (host.processorCount || '—') + '</div>' +
+      '<div class="k">Память</div><div>' + Math.round((host.memoryTotalMb || 0) / 1024) + ' ГБ</div>' +
+      '</div>' +
+      '<div style="margin-top:10px"><div class="muted" style="font-size:11.5px;margin-bottom:6px">Диски</div>' +
+      '<table class="cfg-table"><thead><tr><th>Диск</th><th>Метка</th><th>Свободно</th><th style="width:160px"></th></tr></thead><tbody>';
+
+    (host.drives || []).forEach(function (d) {
+      var pct = d.freePercent || 0;
+      var cls = pct < 5 ? 'fail' : (pct < 15 ? 'warn' : 'ok');
+      html += '<tr><td><code>' + esc(d.name) + '</code></td>' +
+        '<td class="muted">' + esc(d.label || '—') + '</td>' +
+        '<td>' + d.freeGb + ' из ' + d.totalGb + ' ГБ</td>' +
+        '<td><div class="bar"><i style="width:' + Math.max(2, pct) + '%;background:var(--' + cls + ')"></i></div></td></tr>';
+    });
+
+    html += '</tbody></table></div></div></div>';
+
+    // --- список ВМ
+    html += '<div class="card"><div class="card-head"><i class="fas fa-cubes"></i> Виртуальные машины' +
+      '<span class="spacer"></span>' +
+      '<input type="text" id="inv-filter" class="inv-filter" placeholder="фильтр по имени…" value="' + esc(invState.filter) + '">' +
+      '</div><div class="card-body" style="padding:0"><div id="inv-list"></div></div></div>';
+
+    view.innerHTML = html;
+
+    document.getElementById('inv-refresh').addEventListener('click', function () {
+      var btn = this;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Обновляю…';
+      api('/api/inventory?refresh=1').then(function (d) {
+        invState.data = d;
+        drawInventory();
+      }).catch(function (err) {
+        toast('Ошибка: ' + err.message, 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-sync-alt"></i> Обновить';
+      });
+    });
+
+    var f = document.getElementById('inv-filter');
+    if (f) {
+      f.addEventListener('input', function () {
+        invState.filter = this.value;
+        drawVmList();
+      });
+    }
+
+    drawVmList();
+  }
+
+  function drawVmList() {
+    var box = document.getElementById('inv-list');
+    if (!box) return;
+    var vms = (invState.data && invState.data.vms) || [];
+    var q = (invState.filter || '').toLowerCase();
+    if (q) {
+      vms = vms.filter(function (v) {
+        return (v.name || '').toLowerCase().indexOf(q) >= 0 ||
+          (v.state || '').toLowerCase().indexOf(q) >= 0 ||
+          (v.ip || '').indexOf(q) >= 0;
+      });
+    }
+
+    if (!vms.length) {
+      box.innerHTML = '<div style="padding:16px" class="muted">' +
+        (q ? 'Ничего не найдено по фильтру «' + esc(invState.filter) + '».' : 'Виртуальных машин нет.') +
+        '</div>';
+      return;
+    }
+
+    var html = '<table class="journal-table"><thead><tr>' +
+      '<th>ВМ</th><th>Состояние</th><th>vCPU</th><th>Память</th>' +
+      '<th>Диски</th><th>Снимки</th><th>IP</th><th>Аптайм</th>' +
+      '</tr></thead><tbody>';
+
+    vms.forEach(function (v) {
+      var badge = v.running
+        ? '<span class="badge s-OK">работает</span>'
+        : '<span class="badge s-NODATA">' + esc(v.state) + '</span>';
+
+      var memText = v.memoryMb > 0
+        ? (v.memoryMb >= 1024 ? (v.memoryMb / 1024).toFixed(v.memoryMb % 1024 === 0 ? 0 : 1) + ' ГБ' : v.memoryMb + ' МБ')
+        : '—';
+      if (v.dynamicMemory) memText += ' <span class="muted" style="font-size:10.5px">дин.</span>';
+
+      var disks = (v.disks || []);
+      var diskText = disks.length
+        ? disks.length + ' · ' + fmtSize(v.diskBytes)
+        : '<span class="muted">—</span>';
+
+      var snap = v.checkpoints > 0
+        ? '<span style="color:var(--warn)">' + v.checkpoints + '</span>'
+        : '<span class="muted">0</span>';
+
+      html += '<tr>' +
+        '<td><strong>' + esc(v.name) + '</strong>' +
+          '<div class="muted" style="font-size:10.5px">Gen' + (v.generation || '?') +
+          (v.heartbeat ? ' · ' + esc(v.heartbeat) : '') + '</div></td>' +
+        '<td>' + badge + '</td>' +
+        '<td>' + (v.cpu > 0 ? v.cpu : '—') + '</td>' +
+        '<td>' + memText + '</td>' +
+        '<td style="font-size:11.5px">' + diskText + '</td>' +
+        '<td>' + snap + '</td>' +
+        '<td style="font-size:11.5px">' + (v.ip ? '<code>' + esc(v.ip) + '</code>' : '<span class="muted">—</span>') + '</td>' +
+        '<td class="muted" style="font-size:11.5px">' + fmtUptimeShort(v.uptimeHours) + '</td>' +
+        '</tr>';
+    });
+
+    html += '</tbody></table>';
+    box.innerHTML = html;
   }
 
   // ------------------------------------------------------------------ форма компании
