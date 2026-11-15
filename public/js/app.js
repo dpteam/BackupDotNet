@@ -3207,6 +3207,144 @@
       (hint ? '<small>' + esc(hint) + '</small>' : '') + '</label>';
   }
 
+  // ------------------------------------------------------------------ живая проверка формы
+
+  var formValidationState = { last: null, timer: null, seq: 0 };
+
+  /** Снимает подсветку и подсказки, оставшиеся от предыдущей проверки. */
+  function clearFieldMarks() {
+    $$('.fld.fld-error, .fld.fld-warn').forEach(function (el) {
+      el.classList.remove('fld-error', 'fld-warn');
+    });
+    $$('.src-error, .src-warn').forEach(function (el) {
+      el.classList.remove('src-error', 'src-warn');
+    });
+    $$('.fld-msg').forEach(function (el) { el.parentNode.removeChild(el); });
+  }
+
+  /** Помечает поле формы по пути из валидатора. */
+  function markField(field, kind, message) {
+    // Список источников целиком: у него нет одного input.
+    if (field === 'sources') {
+      var box = document.getElementById('sources-box');
+      if (!box) return false;
+      var mark = document.createElement('div');
+      mark.className = 'fld-msg ' + kind + ' sources-mark';
+      mark.textContent = message;
+      box.insertBefore(mark, box.firstChild);
+      return true;
+    }
+
+    var el = document.querySelector('[data-f="' + field.replace(/"/g, '\\"') + '"]');
+    if (!el) {
+      // У поля нет своего input (например, пароль вынесен в секреты) —
+      // подсвечиваем весь блок источника, чтобы было видно, где искать.
+      var m = /^src\.(\d+)\./.exec(field);
+      if (!m) return false;
+      var block = document.querySelector('[data-src="' + m[1] + '"]');
+      if (!block) return false;
+      block.classList.add(kind === 'error' ? 'src-error' : 'src-warn');
+      var badge = block.querySelector('.src-marks');
+      if (badge) {
+        var tag = document.createElement('div');
+        tag.className = 'fld-msg ' + kind;
+        tag.textContent = message;
+        badge.appendChild(tag);
+      }
+      return true;
+    }
+    var box = el.closest ? el.closest('.fld') : null;
+    if (!box) return false;
+    box.classList.add(kind === 'error' ? 'fld-error' : 'fld-warn');
+    var msg = document.createElement('small');
+    msg.className = 'fld-msg ' + kind;
+    msg.textContent = message;
+    box.appendChild(msg);
+    return true;
+  }
+
+  /** Прокручивает к первому полю с ошибкой. */
+  function focusFirstError() {
+    var box = document.querySelector('.fld.fld-error');
+    if (!box) return;
+    box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    var el = box.querySelector('input, select, textarea');
+    if (el && el.focus) el.focus();
+  }
+
+  function renderCheckPanel(res) {
+    var panel = document.getElementById('form-check');
+    if (!panel) return;
+    var errs = res.fields || [];
+    var warns = res.warnings || [];
+
+    if (!errs.length && !warns.length) {
+      panel.className = 'form-check ok';
+      panel.innerHTML = '<i class="fas fa-check-circle"></i> Проверка пройдена';
+      return;
+    }
+
+    var html = '';
+    if (errs.length) {
+      html += '<div class="fc-title error"><i class="fas fa-times-circle"></i> Ошибки: ' + errs.length + '</div>' +
+        '<ul class="fc-list">' + errs.map(function (e) {
+          return '<li>' + esc(e.message) + '</li>';
+        }).join('') + '</ul>';
+    }
+    if (warns.length) {
+      html += '<div class="fc-title warn"><i class="fas fa-exclamation-triangle"></i> Замечания: ' + warns.length + '</div>' +
+        '<ul class="fc-list warn">' + warns.map(function (w) {
+          return '<li>' + esc(w.message) + '</li>';
+        }).join('') + '</ul>';
+    }
+    panel.className = 'form-check' + (errs.length ? ' has-errors' : ' has-warnings');
+    panel.innerHTML = html;
+  }
+
+  /** Отправляет форму на проверку и раскрашивает поля. */
+  function runLiveValidation(f, immediate) {
+    clearTimeout(formValidationState.timer);
+    var delay = immediate ? 0 : 400;
+    formValidationState.timer = setTimeout(function () {
+      var data = collectForm();
+      var seq = ++formValidationState.seq;
+      var url = '/api/company/validate' + (f._origId ? '?id=' + encodeURIComponent(f._origId) : '');
+      api(url, { method: 'POST', body: data }).then(function (res) {
+        // Ответ мог прийти от устаревшего запроса — тогда игнорируем.
+        if (seq !== formValidationState.seq) return;
+        formValidationState.last = res;
+        clearFieldMarks();
+        (res.fields || []).forEach(function (e) { markField(e.field, 'error', e.message); });
+        (res.warnings || []).forEach(function (w) { markField(w.field, 'warn', w.message); });
+        renderCheckPanel(res);
+        var save = document.getElementById('btn-save');
+        if (save) {
+          save.classList.toggle('btn-primary', !(res.fields && res.fields.length));
+        }
+      }).catch(function () {
+        // Проверка недоступна — не мешаем работать, сохранение всё равно проверит сервер.
+      });
+    }, delay);
+  }
+
+  function attachLiveValidation(f) {
+    var form = document.getElementById('company-form');
+    if (!form) return;
+
+    // Панель итога — сразу под заголовком.
+    var panel = document.createElement('div');
+    panel.id = 'form-check';
+    panel.className = 'form-check';
+    panel.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Проверяю…';
+    var title = document.querySelector('.page-title');
+    if (title && title.parentNode) title.parentNode.insertBefore(panel, title.nextSibling);
+
+    form.addEventListener('input', function () { runLiveValidation(f, false); });
+    form.addEventListener('change', function () { runLiveValidation(f, false); });
+
+    runLiveValidation(f, true);
+  }
+
   function renderForm(f) {
     var html = '';
     html += '<h2 class="page-title"><i class="fas fa-' + (f._isNew ? 'plus-circle' : 'pen') + '"></i> ' +
@@ -3282,7 +3420,7 @@
 
     // ---- кнопки
     html += '<div class="form-actions">' +
-      '<button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Сохранить</button>' +
+      '<button type="submit" class="btn btn-primary" id="btn-save"><i class="fas fa-save"></i> Сохранить</button>' +
       '<button type="button" class="btn" id="btn-cancel">Отмена</button>' +
       (f._isNew ? '' : '<span class="spacer"></span><button type="button" class="btn btn-danger" id="btn-delete"><i class="fas fa-trash"></i> Удалить</button>') +
       '</div>';
@@ -3291,12 +3429,23 @@
 
     view.innerHTML = html;
 
+    // ---- живая проверка: ошибки подсвечиваются до сохранения
+    attachLiveValidation(f);
+
     // ---- обработчики
     document.getElementById('company-form').addEventListener('submit', function (e) {
       e.preventDefault();
       var collected = collectForm();
       collected._origId = f._origId;
       collected._isNew = f._isNew;
+      // Перед сохранением — последняя проверка: не отправляем заведомо битую форму.
+      var live = formValidationState.last;
+      var liveErrors = (live && live.fields) ? live.fields.length : 0;
+      if (liveErrors > 0) {
+        toast('Исправьте ошибки в форме: их ' + liveErrors, 'error');
+        focusFirstError();
+        return;
+      }
       saveCompany(collected);
     });
 
@@ -3397,7 +3546,8 @@
         (src.enabled !== false ? ' checked' : '') + '> вкл</label>' +
       '<span class="spacer"></span>' +
       '<button type="button" class="btn btn-sm" data-remove-source="' + idx + '"><i class="fas fa-times"></i></button>' +
-      '</div>';
+      '</div>' +
+      '<div class="src-marks"></div>';
 
     h += '<div class="form-grid">';
 

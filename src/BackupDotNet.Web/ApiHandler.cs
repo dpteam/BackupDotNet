@@ -1574,9 +1574,16 @@ public class ApiHandler
 	{
 		Dictionary<string, object> payload = ReadJson(ctx);
 		Dictionary<string, object> normalized = Normalize(payload, null, out var errors);
+		string existingId = Query(ctx, "id").Trim();
+		CompanyValidator.Result check = CompanyValidator.Validate(payload, _config, existingId);
+
 		Dictionary<string, object> resp = Json.Obj();
-		resp["ok"] = errors.Count == 0;
+		Dictionary<string, object> fields = check.ToJson();
+		// ok = и проверка сохранения, и структурная проверка чисты.
+		resp["ok"] = errors.Count == 0 && check.Ok;
 		resp["errors"] = ToObjectList(errors);
+		resp["fields"] = fields["errors"];
+		resp["warnings"] = fields["warnings"];
 		resp["id"] = Json.GetStr(normalized, "id", "");
 		WriteJson(ctx, resp, 200);
 	}
