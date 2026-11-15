@@ -201,6 +201,7 @@ public static class Program
 		}
 		store = new DataStore(cfg.Settings.DataDir);
 		store.Load();
+		PruneHistoryIfNeeded(store, cfg.Settings);
 		List<string> knownIds = new List<string>();
 		foreach (Company c in cfg.Companies)
 		{
@@ -208,6 +209,27 @@ public static class Program
 		}
 		store.PruneOrphans(knownIds);
 		return new AgentCtx(cfg.Settings, cfg, store);
+	}
+
+	/// <summary>
+	/// Чистит историю по политике хранения. Вызывается при старте: раз в сутки
+	/// этого достаточно, а чаще — незачем.
+	/// </summary>
+	internal static void PruneHistoryIfNeeded(DataStore store, Settings settings)
+	{
+		if (!settings.HistoryAutoPrune)
+		{
+			Log.Debug("История: автоочистка выключена (history.autoPrune = false)");
+			return;
+		}
+		try
+		{
+			store.PruneHistory(settings.HistoryJournalKeepDays, settings.HistoryRollupKeepMonths);
+		}
+		catch (Exception ex)
+		{
+			Log.Warn("История: очистка не удалась — " + ex.Message);
+		}
 	}
 
 	private static int RunOnce(string root)

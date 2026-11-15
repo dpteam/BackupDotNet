@@ -50,6 +50,16 @@
     "maxFileSizeMb": 32,
     "keepDays": 90
   },
+  "history": {
+    "journalKeepDays": 400,
+    "rollupKeepMonths": 60,
+    "autoPrune": true
+  },
+  "updates": {
+    "enabled": false,
+    "path": "\\\\fileserver\\BackupDotNet\\latest",
+    "checkOnStart": true
+  },
   "notifications": {
     "enabled": false,
     "on": {

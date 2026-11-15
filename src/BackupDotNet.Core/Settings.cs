@@ -76,6 +76,25 @@ public class Settings
 
 	public int LogKeepDays = 90;
 
+	// ------------------------------------------------------------------ хранение истории
+
+	/// <summary>Сколько дней хранить подробный журнал прогонов (файлы journal/yyyy-MM.ndjson).</summary>
+	public int HistoryJournalKeepDays = 400;
+
+	/// <summary>Сколько месяцев хранить суточные сводки (rollups/).</summary>
+	public int HistoryRollupKeepMonths = 60;
+
+	/// <summary>Удалять ли старое автоматически при запуске.</summary>
+	public bool HistoryAutoPrune = true;
+
+	// ------------------------------------------------------------------ обновления
+
+	public bool UpdatesEnabled;
+
+	public string UpdatesPath = "";
+
+	public bool UpdatesCheckOnStart = true;
+
 	// ------------------------------------------------------------------ уведомления
 
 	public bool NotifyEnabled;
@@ -173,6 +192,16 @@ public class Settings
 		s.LogLevel = Json.GetStr(lg, "level", s.LogLevel);
 		s.LogMaxMb = Json.Int(Json.Get(lg, "maxFileSizeMb"), s.LogMaxMb);
 		s.LogKeepDays = Json.Int(Json.Get(lg, "keepDays"), s.LogKeepDays);
+
+		Dictionary<string, object> hist = Json.AsObject(Json.Get(root, "history"));
+		s.HistoryJournalKeepDays = Json.Int(Json.Get(hist, "journalKeepDays"), s.HistoryJournalKeepDays);
+		s.HistoryRollupKeepMonths = Json.Int(Json.Get(hist, "rollupKeepMonths"), s.HistoryRollupKeepMonths);
+		s.HistoryAutoPrune = Json.Bool(Json.Get(hist, "autoPrune"), s.HistoryAutoPrune);
+
+		Dictionary<string, object> upd = Json.AsObject(Json.Get(root, "updates"));
+		s.UpdatesEnabled = Json.Bool(Json.Get(upd, "enabled"), s.UpdatesEnabled);
+		s.UpdatesPath = Json.GetStr(upd, "path", s.UpdatesPath);
+		s.UpdatesCheckOnStart = Json.Bool(Json.Get(upd, "checkOnStart"), s.UpdatesCheckOnStart);
 
 		Dictionary<string, object> nt = Json.AsObject(Json.Get(root, "notifications"));
 		s.NotifyEnabled = Json.Bool(Json.Get(nt, "enabled"), s.NotifyEnabled);

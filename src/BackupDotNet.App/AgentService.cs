@@ -77,6 +77,7 @@ public class AgentService : ServiceBase
 		}
 		DataStore store = new DataStore(cfg.Settings.DataDir);
 		store.Load();
+		Program.PruneHistoryIfNeeded(store, cfg.Settings);
 		List<string> knownIds = new List<string>();
 		foreach (Company c in cfg.Companies)
 		{

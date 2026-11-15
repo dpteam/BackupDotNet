@@ -2518,6 +2518,15 @@
         '</div><div class="card-body" id="brand-box">' +
         '<div class="muted">Загрузка…</div></div></div>';
 
+      html += '<div class="card"><div class="card-head"><i class="fas fa-cloud-arrow-down"></i> Обновления' +
+        '<span class="spacer"></span><span class="muted" style="font-size:11px" id="upd-summary"></span>' +
+        '</div><div class="card-body" id="upd-box"><div class="muted">Загрузка…</div></div></div>';
+
+      html += '<div class="card"><div class="card-head"><i class="fas fa-database"></i> Хранение истории' +
+        '<span class="spacer"></span>' +
+        (state.me && state.me.canManageUsers ? '<button class="btn btn-sm" id="hist-prune"><i class="fas fa-broom"></i> Прибрать</button>' : '') +
+        '</div><div class="card-body" id="hist-box"><div class="muted">Загрузка…</div></div></div>';
+
       html += '<div class="card"><div class="card-head"><i class="fas fa-bell"></i> Уведомления' +
         '<span class="spacer"></span><span class="muted" style="font-size:11px" id="notify-summary"></span>' +
         '</div><div class="card-body" id="notify-box"><div class="muted">Загрузка…</div></div></div>';
@@ -2561,6 +2570,8 @@
 
       loadAgents();
       loadBrandingBox();
+      loadUpdatesBox();
+      loadHistoryBox(s);
       loadNotifyBox();
       wireConfigBundle();
 
@@ -2578,6 +2589,110 @@
     }).catch(function (err) {
       view.innerHTML = '<div class="card"><div class="card-body">Ошибка: ' + esc(err.message) + '</div></div>';
     });
+  }
+
+  // ------------------------------------------------------------------ обновления
+
+  function loadUpdatesBox() {
+    var box = document.getElementById('upd-box');
+    if (!box) return;
+
+    api('/api/updates').then(function (u) {
+      var summary = document.getElementById('upd-summary');
+
+      if (!u.enabled) {
+        if (summary) summary.textContent = 'выключено';
+        box.innerHTML = '<p class="muted" style="margin:0">Проверка обновлений выключена. ' +
+          'Включите <code>updates.enabled</code> и укажите <code>updates.path</code> — ' +
+          'локальный каталог или сетевую папку с манифестом <code>' + esc('latest.json') + '</code>.</p>';
+        return;
+      }
+
+      if (u.available) {
+        if (summary) summary.textContent = 'доступна ' + u.latestVersion;
+        var html = '<div class="upd-banner">' +
+          '<i class="fas fa-circle-up"></i>' +
+          '<div><div class="upd-title">Доступна версия ' + esc(u.latestVersion) + '</div>' +
+          '<div class="upd-sub">установлена ' + esc(u.currentVersion) +
+          (u.publishedAt ? ' · опубликована ' + esc(fmtDate(u.publishedAt)) : '') + '</div></div>' +
+          '</div>';
+        if (u.notes) {
+          html += '<div class="upd-notes">' + esc(u.notes) + '</div>';
+        }
+        html += '<div class="kv" style="margin-top:10px">' +
+          '<div class="k">Каталог</div><div><code>' + esc(u.path) + '</code></div>' +
+          (u.fileName ? '<div class="k">Файл</div><div><code>' + esc(u.fileName) + '</code></div>' : '') +
+          '</div>' +
+          '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' +
+          'Обновление ставится вручную: распакуйте архив поверх каталога программы, ' +
+          'сохранив <code>config</code> и <code>data</code>, и перезапустите службу.</p>';
+        box.innerHTML = html;
+        return;
+      }
+
+      if (summary) summary.textContent = 'актуально';
+      box.innerHTML = '<div class="kv">' +
+        '<div class="k">Установлено</div><div>' + esc(u.currentVersion) + ' — последняя известная</div>' +
+        '<div class="k">Каталог</div><div><code>' + esc(u.path || '—') + '</code></div>' +
+        (u.error ? '<div class="k">Замечание</div><div class="muted">' + esc(u.error) + '</div>' : '') +
+        '</div>';
+    }).catch(function (err) {
+      box.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
+    });
+  }
+
+  // ------------------------------------------------------------------ хранение истории
+
+  function loadHistoryBox(s) {
+    var box = document.getElementById('hist-box');
+    if (!box) return;
+
+    var h = s.history || {};
+    var st = s.storage || {};
+
+    function render() {
+      var html = '<div class="kv">' +
+        '<div class="k">Журнал прогонов</div><div>хранить ' + (h.journalKeepDays || 0) + ' дней</div>' +
+        '<div class="k">Суточные сводки</div><div>хранить ' + (h.rollupKeepMonths || 0) + ' месяцев</div>' +
+        '<div class="k">Журналы агента</div><div>хранить ' + (h.logKeepDays || 0) + ' дней</div>' +
+        '<div class="k">Автоочистка</div><div>' + (h.autoPrune ? 'при запуске' : 'выключена') + '</div>' +
+        '<div class="k">Сейчас занято</div><div>' + (st.journalFiles || 0) + ' файлов журнала (' +
+          fmtSize(st.journalBytes) + '), сводок ' + (st.rollupFiles || 0) + ' (' + fmtSize(st.rollupBytes) + ')</div>' +
+        (st.oldestJournal ? '<div class="k">Самое старое</div><div>' + esc(st.oldestJournal) + '</div>' : '') +
+        '</div>' +
+        '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' +
+        'Настраивается в <code>config/settings.json</code> → <code>history</code>. ' +
+        'Журнал — файл на месяц, поэтому удаляются только месяцы целиком старше порога.</p>';
+      box.innerHTML = html;
+    }
+
+    render();
+
+    var btn = document.getElementById('hist-prune');
+    if (btn) {
+      btn.addEventListener('click', function () {
+        if (!confirm('Удалить историю старше ' + (h.journalKeepDays || 0) + ' дней и сводки старше ' +
+          (h.rollupKeepMonths || 0) + ' месяцев?\n\nДействие необратимо.')) return;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Чищу…';
+        api('/api/history/prune', { method: 'POST', body: {} }).then(function (r) {
+          if (r.count > 0) {
+            toast('Удалено файлов: ' + r.count + ', освобождено ' + fmtSize(r.freedBytes), 'ok');
+          } else {
+            toast('Удалять нечего — всё в пределах политики', 'ok');
+          }
+          if (r.storage) {
+            s.storage = r.storage;
+            render();
+          }
+        }).catch(function (err) {
+          toast('Ошибка: ' + err.message, 'error');
+        }).then(function () {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-broom"></i> Прибрать';
+        });
+      });
+    }
   }
 
   // ------------------------------------------------------------------ уведомления

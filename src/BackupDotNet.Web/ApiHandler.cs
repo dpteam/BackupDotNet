@@ -143,6 +143,9 @@ public class ApiHandler
 				return;
 			case "/api/notify/status":
 				HandleNotifyStatus(ctx, session);
+				return;
+			case "/api/updates":
+				HandleUpdates(ctx, session);
 				return;			case "/api/users":
 				if (method == "GET")
 				{
@@ -211,6 +214,11 @@ public class ApiHandler
 			if (path == "/api/notify/test" && method == "POST")
 			{
 				HandleNotifyTest(ctx, session);
+				return;
+			}
+			if (path == "/api/history/prune" && method == "POST")
+			{
+				HandleHistoryPrune(ctx, session);
 				return;
 			}
 			if (path.StartsWith("/api/company/"))
@@ -990,11 +998,41 @@ public class ApiHandler
 		WriteJson(ctx, resp, err.Length == 0 ? 200 : 400);
 	}
 
+	/// <summary>
+	/// POST /api/history/prune — прибрать историю по текущей политике.
+	/// Полезно после смены настроек: не ждать следующего запуска агента.
+	/// </summary>
+	private void HandleHistoryPrune(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		Dictionary<string, object> report = _store.PruneHistory(_settings.HistoryJournalKeepDays, _settings.HistoryRollupKeepMonths);
+		_audit.Write(si.User, "history.prune",
+			"файлов: " + Json.Int(Json.Get(report, "count")) + ", IP " + ClientIp(ctx), "history");
+		report["storage"] = _store.StorageStats();
+		WriteJson(ctx, report, 200);
+	}
+
+	/// <summary>
+	/// GET /api/updates — есть ли в локальном каталоге версия новее текущей.
+	/// Ничего не скачивает и не устанавливает: только сообщает факт.
+	/// </summary>
+	private void HandleUpdates(HttpListenerContext ctx, SessionInfo si)
+	{
+		string current = (_scheduler != null) ? _scheduler.Version : "";
+		UpdateChecker.Result r = UpdateChecker.Check(_settings, current);
+		WriteJson(ctx, r.ToJson(), 200);
+	}
+
 	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)
 	{
 		Dictionary<string, object> d = Json.Obj();
 		d["agentName"] = _settings.AgentName;
-		d["dataDir"] = _settings.DataDir;		d["publicDir"] = _settings.PublicDir;
+		d["dataDir"] = _settings.DataDir;
+		d["publicDir"] = _settings.PublicDir;
 		d["httpPort"] = _settings.HttpPort;
 		d["timezone"] = _settings.Timezone;
 		d["tickSeconds"] = _settings.TickSeconds;
@@ -1008,6 +1046,16 @@ public class ApiHandler
 		d["webRequireAuth"] = _settings.WebRequireAuth;
 		d["configErrors"] = ToList(_config.LoadErrors);
 		d["collectorTypes"] = ToList(new List<string>(Collectors.Types));
+
+		// --- политика хранения истории
+		Dictionary<string, object> hist = Json.Obj();
+		hist["journalKeepDays"] = _settings.HistoryJournalKeepDays;
+		hist["rollupKeepMonths"] = _settings.HistoryRollupKeepMonths;
+		hist["autoPrune"] = _settings.HistoryAutoPrune;
+		hist["logKeepDays"] = _settings.LogKeepDays;
+		d["history"] = hist;
+		d["storage"] = _store.StorageStats();
+
 		WriteJson(ctx, d, 200);
 	}
 

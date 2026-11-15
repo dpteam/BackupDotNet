@@ -82,7 +82,6 @@ netsh http add urlacl url=http://+:8080/ user="NT AUTHORITY\SYSTEM"
 но файл растёт заметно быстрее.
 
 ### `notifications`
-
 | Ключ | По умолчанию | Описание |
 |---|---|---|
 | `enabled` | `false` | Главный выключатель |
@@ -95,6 +94,19 @@ netsh http add urlacl url=http://+:8080/ user="NT AUTHORITY\SYSTEM"
 Списки получателей (`smtp.to`, `telegram.chats`) принимают и массив, и строку
 через запятую. Подробности и правила отправки — в
 [ARCHITECTURE.md](ARCHITECTURE.md#уведомления).
+
+### `history` и `updates`
+
+| Ключ | По умолчанию | Описание |
+|---|---|---|
+| `history.journalKeepDays` | `400` | сколько дней хранить подробный журнал прогонов |
+| `history.rollupKeepMonths` | `60` | сколько месяцев хранить суточные сводки |
+| `history.autoPrune` | `true` | чистить старое при запуске |
+| `updates.enabled` | `false` | включить проверку обновлений |
+| `updates.path` | — | каталог или сетевая папка с `latest.json` |
+| `updates.checkOnStart` | `true` | проверять при старте |
+
+Подробности — в [ARCHITECTURE.md](ARCHITECTURE.md#хранение-истории-и-обновления).
 
 ---
 

@@ -294,6 +294,164 @@ public class DataStore
 		}
 	}
 
+	/// <summary>
+	/// Удаляет старые файлы истории по политике хранения.
+	/// Подробный журнал — по дням, суточные сводки — по месяцам.
+	/// Возвращает отчёт: что удалено и сколько места освободилось.
+	/// </summary>
+	public Dictionary<string, object> PruneHistory(int journalKeepDays, int rollupKeepMonths)
+	{
+		Dictionary<string, object> report = Json.Obj();
+		List<object> removed = new List<object>();
+		long freedBytes = 0L;
+
+		if (journalKeepDays > 0)
+		{
+			// Файл журнала — это месяц. Удаляем только те месяцы, которые
+			// целиком старше порога: последний «частичный» месяц не трогаем.
+			DateTime cutoff = DateTime.Now.AddDays(-journalKeepDays);
+			string cutoffYm = cutoff.ToString("yyyy-MM", CultureInfo.InvariantCulture);
+			try
+			{
+				foreach (string f in Directory.GetFiles(_journalDir, "*.ndjson"))
+				{
+					string ym = Path.GetFileNameWithoutExtension(f);
+					if (string.CompareOrdinal(ym, cutoffYm) >= 0)
+					{
+						continue;
+					}
+					try
+					{
+						long len = new FileInfo(f).Length;
+						File.Delete(f);
+						freedBytes += len;
+						removed.Add(ym);
+					}
+					catch
+					{
+					}
+				}
+			}
+			catch
+			{
+			}
+		}
+
+		if (rollupKeepMonths > 0)
+		{
+			DateTime cutoffMonth = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(-rollupKeepMonths);
+			string cutoffYm = cutoffMonth.ToString("yyyy-MM", CultureInfo.InvariantCulture);
+			try
+			{
+				foreach (string f in Directory.GetFiles(_rollupDir, "*.json"))
+				{
+					string name = Path.GetFileNameWithoutExtension(f);
+					string ym = name.StartsWith("uptime-", StringComparison.OrdinalIgnoreCase)
+						? name.Substring("uptime-".Length)
+						: name;
+					if (ym.Length != 7 || string.CompareOrdinal(ym, cutoffYm) >= 0)
+					{
+						continue;
+					}
+					try
+					{
+						long len = new FileInfo(f).Length;
+						File.Delete(f);
+						freedBytes += len;
+						removed.Add(Path.GetFileName(f));
+					}
+					catch
+					{
+					}
+				}
+			}
+			catch
+			{
+			}
+		}
+
+		report["removed"] = removed;
+		report["count"] = removed.Count;
+		report["freedBytes"] = freedBytes;
+		if (removed.Count > 0)
+		{
+			Log.Info("История: удалено файлов " + removed.Count + ", освобождено " + Fmt.Size(freedBytes));
+		}
+		return report;
+	}
+
+	/// <summary>Сколько занимают история и сводки — для страницы настроек.</summary>
+	public Dictionary<string, object> StorageStats()
+	{
+		Dictionary<string, object> d = Json.Obj();
+		d["journalFiles"] = CountFiles(_journalDir, "*.ndjson");
+		d["journalBytes"] = DirBytes(_journalDir, "*.ndjson");
+		d["rollupFiles"] = CountFiles(_rollupDir, "*.json");
+		d["rollupBytes"] = DirBytes(_rollupDir, "*.json");
+		d["oldestJournal"] = OldestName(_journalDir, "*.ndjson");
+		return d;
+	}
+
+	private static int CountFiles(string dir, string pattern)
+	{
+		try
+		{
+			return Directory.Exists(dir) ? Directory.GetFiles(dir, pattern).Length : 0;
+		}
+		catch
+		{
+			return 0;
+		}
+	}
+
+	private static long DirBytes(string dir, string pattern)
+	{
+		long total = 0L;
+		try
+		{
+			if (!Directory.Exists(dir))
+			{
+				return 0L;
+			}
+			foreach (string f in Directory.GetFiles(dir, pattern))
+			{
+				try
+				{
+					total += new FileInfo(f).Length;
+				}
+				catch
+				{
+				}
+			}
+		}
+		catch
+		{
+		}
+		return total;
+	}
+
+	private static string OldestName(string dir, string pattern)
+	{
+		try
+		{
+			if (!Directory.Exists(dir))
+			{
+				return "";
+			}
+			string[] files = Directory.GetFiles(dir, pattern);
+			if (files.Length == 0)
+			{
+				return "";
+			}
+			Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+			return Path.GetFileNameWithoutExtension(files[0]);
+		}
+		catch
+		{
+			return "";
+		}
+	}
+
 	public int PruneOrphans(ICollection<string> knownCompanyIds)
 	{
 		lock (_sync)
