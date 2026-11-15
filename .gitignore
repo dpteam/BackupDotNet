@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------- build output
+bin/
+obj/
+publish/
+artifacts/
+*.user
+*.suo
+*.userprefs
+*.cache
+*.pdb
+*.nupkg
+*.snupkg
+*.log.bak
+
+# ---------------------------------------------------------------- runtime data
+data/
+logs/
+cache/
+state/
+auth/
+config/secrets.json
+config/settings.json
+config/env.json
+config/companies/*.json
+!config/companies/*.example.json
+
+# ---------------------------------------------------------------- IDE / OS
+.vs/
+.vscode/
+.idea/
+*.DotSettings.user
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---------------------------------------------------------------- temp
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+~$*

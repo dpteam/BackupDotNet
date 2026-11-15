@@ -1,0 +1,9 @@
+namespace RVTools.LoginSSPI.Security;
+
+public enum SecBufferType
+{
+	SECBUFFER_VERSION = 0,
+	SECBUFFER_EMPTY = SECBUFFER_VERSION,
+	SECBUFFER_DATA = 1,
+	SECBUFFER_TOKEN = 2
+}

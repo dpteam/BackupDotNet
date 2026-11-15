@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Мониторинг бэкапов</title>
+<link rel="icon" href="img/logo.png" id="brand-favicon">
+<link rel="stylesheet" href="vendor/fa/css/all.min.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- ============================================================ вход -->
+<div id="login-screen" class="login-screen hidden">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="login-logo">
+        <img src="img/logo.png" alt="" class="logo-light brand-logo-light">
+        <img src="img/logo-dark.png" alt="" class="logo-dark brand-logo-dark">
+      </div>
+      <h1><span class="bt-brand brand-part1"></span> <span class="bt-rest brand-part2"></span></h1>
+      <p class="login-tagline brand-tagline"></p>
+    </div>
+    <form id="login-form" autocomplete="on">
+      <label>Пользователь</label>
+      <input type="text" name="username" value="admin" required>
+      <label>Пароль</label>
+      <input type="password" name="password" required>
+      <button type="submit" class="btn btn-primary btn-block">
+        <i class="fas fa-sign-in-alt"></i> Войти
+      </button>
+      <div id="login-error" class="login-error hidden"></div>
+    </form>
+    <div class="login-footer">
+      <a href="#" target="_blank" rel="noopener" class="brand-footer-url"></a>
+      <span>·</span>
+      <a href="#" id="theme-toggle-login"><i class="fas fa-adjust"></i> Тема</a>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ приложение -->
+<div id="app" class="app hidden">
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#/dashboard">
+        <span class="brand-logo-wrap">
+          <img src="img/logo.png" alt="" class="brand-logo logo-light brand-logo-light">
+          <img src="img/logo-dark.png" alt="" class="brand-logo logo-dark brand-logo-dark">
+        </span>
+        <span class="brand-text"><span class="bt-brand brand-part1"></span> <span class="bt-rest brand-part2"></span></span>
+      </a>
+
+      <nav class="nav">
+        <a href="#/dashboard" data-nav="dashboard"><i class="fas fa-tachometer-alt"></i> <span>Дашборд</span></a>
+        <a href="#/uptime" data-nav="uptime"><i class="fas fa-heartbeat"></i> <span>Доступность</span></a>
+        <a href="#/month" data-nav="month"><i class="fas fa-table"></i> <span>Таблица</span></a>
+        <a href="#/journal" data-nav="journal"><i class="fas fa-list-ul"></i> <span>Журнал</span></a>
+        <a href="#/users" data-nav="users" id="nav-users" class="hidden"><i class="fas fa-users"></i> <span>Пользователи</span></a>
+        <a href="#/deploy" data-nav="deploy" id="nav-deploy" class="hidden"><i class="fas fa-cloud-upload-alt"></i> <span>Развёртывание</span></a>
+        <a href="#/manage" data-nav="manage" id="nav-manage" class="hidden"><i class="fas fa-sliders-h"></i> <span>Управление</span></a>
+        <a href="#/settings" data-nav="settings"><i class="fas fa-cog"></i> <span>Настройки</span></a>
+      </nav>
+
+      <div class="topbar-right">
+        <button class="icon-btn" id="btn-refresh" title="Обновить"><i class="fas fa-sync-alt"></i></button>
+        <button class="icon-btn theme-btn" id="btn-theme" title="Сменить тему">
+          <i class="fas fa-sun theme-icon-sun"></i>
+          <i class="fas fa-moon theme-icon-moon"></i>
+        </button>
+        <button class="icon-btn" id="btn-logout" title="Выйти"><i class="fas fa-sign-out-alt"></i></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="content">
+    <div id="view"></div>
+  </main>
+
+  <footer class="footer">
+    <span>© <span class="brand-footer-text"></span> · <a href="#" target="_blank" rel="noopener" class="brand-footer-url"></a></span>
+    <span id="footer-status" class="muted"></span>
+  </footer>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
