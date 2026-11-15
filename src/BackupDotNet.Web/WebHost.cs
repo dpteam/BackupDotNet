@@ -41,6 +41,8 @@ public class WebHost
 
 	public readonly BackupJobQueue Backups;
 
+	public readonly BackupScheduler BackupSchedule;
+
 	public WebHost(Settings settings, ConfigLoader config, DataStore store, Scheduler scheduler, Auth auth, AuditLog audit)
 	{
 		_settings = settings;
@@ -58,6 +60,7 @@ public class WebHost
 		Deploy = new DeployManager(settings, config, Agents);
 		Ops = new OpQueue(settings, config);
 		Backups = new BackupJobQueue(settings);
+		BackupSchedule = new BackupScheduler(settings, Backups);
 	}
 
 	public void Start()
@@ -105,11 +108,19 @@ public class WebHost
 		_thread.Name = "web";
 		_thread.Start();
 		Backups.Start();
+		BackupSchedule.Start();
 	}
 
 	public void Stop()
 	{
 		_stopping = true;
+		try
+		{
+			BackupSchedule.Stop();
+		}
+		catch
+		{
+		}
 		try
 		{
 			Backups.Stop();
@@ -171,7 +182,7 @@ public class WebHost
 			string path = ctx.Request.Url.AbsolutePath;
 			if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
 			{
-				new ApiHandler(_settings, _config, _store, _scheduler, _auth, _audit, Agents, Deploy, Ops, ActualPrefix, Backups).Handle(ctx);
+				new ApiHandler(_settings, _config, _store, _scheduler, _auth, _audit, Agents, Deploy, Ops, ActualPrefix, Backups, BackupSchedule).Handle(ctx);
 			}
 			else
 			{

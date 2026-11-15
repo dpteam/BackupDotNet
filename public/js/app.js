@@ -3276,11 +3276,19 @@
         '<span class="spacer"></span><span class="muted" style="font-size:11px" id="ret-summary"></span>' +
         '</div><div class="card-body" id="ret-box"><div class="muted">Загрузка…</div></div></div>';
 
+      // --- расписания
+      html += '<div class="card"><div class="card-head"><i class="fas fa-calendar-days"></i> Расписания' +
+        '<span class="spacer"></span>' +
+        (state.me && state.me.canWrite ? '<button class="btn btn-sm" id="sch-add"><i class="fas fa-plus"></i> Добавить</button>' : '') +
+        '</div><div class="card-body" style="padding:0"><div id="sch-box">' +
+        '<div style="padding:16px" class="muted">Загрузка…</div></div></div></div>';
+
       view.innerHTML = html;
       backupsState.built = true;
 
       loadBackupTargets();
       loadRetentionBox();
+      loadSchedulesBox();
 
       document.getElementById('bk-refresh-targets').addEventListener('click', loadBackupTargets);
 
@@ -3330,6 +3338,7 @@
     sel.innerHTML = '<option value="">загрузка…</option>';
     api('/api/backup/targets?engine=' + encodeURIComponent(backupsState.engine)).then(function (data) {
       var targets = data.targets || [];
+      backupsState.targets = targets;
       if (!targets.length) {
         sel.innerHTML = '<option value="">нет доступных объектов</option>';
         if (data.error) {
@@ -3521,6 +3530,212 @@
     }).catch(function (err) {
       box.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
     });
+  }
+
+  // ------------------------------------------------------------------ расписания бэкапов
+
+  var DAY_NAMES = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+  function loadSchedulesBox() {
+    var box = document.getElementById('sch-box');
+    if (!box) return;
+
+    api('/api/backup/schedules').then(function (data) {
+      var list = data.schedules || [];
+
+      if (!list.length) {
+        box.innerHTML = '<div style="padding:16px" class="muted">Расписаний нет. ' +
+          'Добавьте, чтобы бэкапы делались сами.</div>';
+        wireAdd();
+        return;
+      }
+
+      var html = '<table class="journal-table"><thead><tr>' +
+        '<th>Название</th><th>Когда</th><th>Объекты</th><th>Следующий</th><th>Итог</th><th style="width:120px"></th>' +
+        '</tr></thead><tbody>';
+
+      list.forEach(function (s) {
+        var badge = s.lastResult === 'failed'
+          ? '<span class="badge s-FAIL">ошибка</span>'
+          : (s.lastResult === 'ok' ? '<span class="badge s-OK">ok</span>' : '<span class="muted">—</span>');
+        html += '<tr>' +
+          '<td><strong>' + esc(s.title) + '</strong>' +
+            (s.enabled ? '' : ' <span class="muted" style="font-size:11px">(выключено)</span>') +
+            (s.lastError ? '<div class="muted" style="font-size:11px;color:var(--fail)">' + esc(s.lastError) + '</div>' : '') +
+          '</td>' +
+          '<td style="font-size:11.5px">' + esc(s.describe) + '</td>' +
+          '<td style="font-size:11.5px">' + (s.targets || []).length + ': ' +
+            esc((s.targets || []).slice(0, 3).join(', ')) +
+            ((s.targets || []).length > 3 ? '…' : '') + '</td>' +
+          '<td class="muted" style="font-size:11.5px">' +
+            (s.enabled && s.nextRunAt ? esc(fmtDateTime(s.nextRunAt)) : '—') + '</td>' +
+          '<td>' + badge + '</td>' +
+          '<td>' +
+            (canWrite() ? '<button class="btn btn-sm" data-sch-run="' + esc(s.id) + '" title="Запустить сейчас">' +
+              '<i class="fas fa-play"></i></button> ' : '') +
+            (canWrite() ? '<button class="btn btn-sm" data-sch-edit="' + esc(s.id) + '" title="Изменить">' +
+              '<i class="fas fa-pen"></i></button> ' : '') +
+            (canWrite() ? '<button class="btn btn-sm btn-danger" data-sch-del="' + esc(s.id) + '" title="Удалить">' +
+              '<i class="fas fa-trash"></i></button>' : '') +
+          '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+      box.innerHTML = html;
+
+      $$('[data-sch-run]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-sch-run');
+          btn.disabled = true;
+          api('/api/backup/schedules/' + encodeURIComponent(id) + '/run', { method: 'POST', body: {} })
+            .then(function () { toast('Задания поставлены в очередь', 'ok'); loadBackupJobs(); loadSchedulesBox(); })
+            .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); btn.disabled = false; });
+        });
+      });
+
+      $$('[data-sch-del]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-sch-del');
+          if (!confirm('Удалить расписание «' + id + '»? Уже созданные задания останутся.')) return;
+          api('/api/backup/schedules/' + encodeURIComponent(id), { method: 'DELETE' })
+            .then(function () { toast('Расписание удалено', 'ok'); loadSchedulesBox(); })
+            .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); });
+        });
+      });
+
+      $$('[data-sch-edit]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-sch-edit');
+          for (var i = 0; i < list.length; i++) {
+            if (list[i].id === id) { openScheduleForm(list[i]); return; }
+          }
+        });
+      });
+
+      wireAdd();
+
+      function wireAdd() {
+        var add = document.getElementById('sch-add');
+        if (add) {
+          add.addEventListener('click', function () { openScheduleForm(null); });
+        }
+      }
+    }).catch(function (err) {
+      box.innerHTML = '<div style="padding:16px" class="muted">Ошибка: ' + esc(err.message) + '</div>';
+    });
+  }
+
+  function openScheduleForm(s) {
+    var isNew = !s;
+    s = s || {
+      id: '', title: '', enabled: true, engine: 'hyperv-export', targets: [],
+      daysOfWeek: [], timeOfDay: '02:00', windowFrom: '', windowTo: '',
+      retries: 0, retryDelayMinutes: 15
+    };
+
+    var targets = backupsState.targets && backupsState.targets.length
+      ? backupsState.targets
+      : [];
+
+    var html = '<div class="modal-backdrop" id="sch-modal"><div class="modal" style="max-width:620px">' +
+      '<h3><i class="fas fa-calendar-days"></i> ' + (isNew ? 'Новое расписание' : 'Расписание: ' + esc(s.title)) + '</h3>' +
+      '<div class="form-grid">' +
+      '<label class="fld"><span>Название</span>' +
+      '<input type="text" id="sch-title" value="' + esc(s.title) + '" placeholder="Ночной бэкап ВМ"></label>' +
+      '<label class="fld"><span>Время запуска</span>' +
+      '<input type="text" id="sch-time" value="' + esc(s.timeOfDay) + '" placeholder="02:00"></label>' +
+      '</div>' +
+      '<div class="form-grid">' +
+      '<label class="fld"><span>Окно (с)</span>' +
+      '<input type="text" id="sch-wfrom" value="' + esc(s.windowFrom) + '" placeholder="22:00"></label>' +
+      '<label class="fld"><span>Окно (до)</span>' +
+      '<input type="text" id="sch-wto" value="' + esc(s.windowTo) + '" placeholder="06:00"></label>' +
+      '</div>' +
+      '<div class="fld"><span>Дни недели (пусто — каждый день)</span>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+      DAY_NAMES.map(function (n, i) {
+        var d = i + 1;
+        var on = (s.daysOfWeek || []).indexOf(d) >= 0;
+        return '<label class="chk" style="margin:0"><input type="checkbox" data-day="' + d + '"' +
+          (on ? ' checked' : '') + '> ' + n + '</label>';
+      }).join('') +
+      '</div></div>' +
+      '<div class="fld"><span>Объекты</span><div id="sch-targets" style="max-height:180px;overflow:auto">';
+
+    if (!targets.length) {
+      html += '<div class="muted" style="font-size:12px">список ВМ не загружен — обновите страницу</div>';
+    } else {
+      targets.forEach(function (t) {
+        var on = (s.targets || []).indexOf(t.name) >= 0;
+        html += '<label class="chk" style="margin:2px 0"><input type="checkbox" data-target="' + esc(t.name) + '"' +
+          (on ? ' checked' : '') + '> ' + esc(t.name) + ' <span class="muted" style="font-size:11px">' +
+          esc(t.state) + '</span></label>';
+      });
+    }
+    html += '</div></div>' +
+      '<div class="form-grid">' +
+      '<label class="fld"><span>Повторов при ошибке</span>' +
+      '<input type="number" id="sch-retries" value="' + (s.retries || 0) + '" min="0" max="10"></label>' +
+      '<label class="fld"><span>Пауза между повторами, мин</span>' +
+      '<input type="number" id="sch-delay" value="' + (s.retryDelayMinutes || 15) + '" min="1" max="1440"></label>' +
+      '</div>' +
+      '<label class="chk" style="margin:10px 0"><input type="checkbox" id="sch-enabled"' +
+        (s.enabled ? ' checked' : '') + '> Расписание включено</label>' +
+      '<div id="sch-form-error"></div>' +
+      '<div class="form-actions">' +
+      '<button class="btn btn-primary" id="sch-save"><i class="fas fa-save"></i> Сохранить</button>' +
+      '<button class="btn" id="sch-cancel">Отмена</button>' +
+      '</div></div></div>';
+
+    var host = document.createElement('div');
+    host.innerHTML = html;
+    document.body.appendChild(host.firstChild);
+
+    document.getElementById('sch-cancel').addEventListener('click', closeScheduleForm);
+
+    document.getElementById('sch-save').addEventListener('click', function () {
+      var days = [];
+      $$('[data-day]').forEach(function (el) {
+        if (el.checked) days.push(parseInt(el.getAttribute('data-day'), 10));
+      });
+      var sel = [];
+      $$('[data-target]').forEach(function (el) {
+        if (el.checked) sel.push(el.getAttribute('data-target'));
+      });
+
+      var payload = {
+        id: s.id || '',
+        title: document.getElementById('sch-title').value.trim(),
+        enabled: document.getElementById('sch-enabled').checked,
+        engine: s.engine || 'hyperv-export',
+        targets: sel,
+        daysOfWeek: days,
+        timeOfDay: document.getElementById('sch-time').value.trim(),
+        windowFrom: document.getElementById('sch-wfrom').value.trim(),
+        windowTo: document.getElementById('sch-wto').value.trim(),
+        retries: parseInt(document.getElementById('sch-retries').value, 10) || 0,
+        retryDelayMinutes: parseInt(document.getElementById('sch-delay').value, 10) || 15
+      };
+
+      var btn = this;
+      btn.disabled = true;
+      api('/api/backup/schedules', { method: 'POST', body: payload })
+        .then(function () {
+          closeScheduleForm();
+          toast('Расписание сохранено', 'ok');
+          loadSchedulesBox();
+        })
+        .catch(function (err) {
+          document.getElementById('sch-form-error').innerHTML =
+            '<div class="cfg-note error">' + esc(err.message) + '</div>';
+          btn.disabled = false;
+        });
+    });
+  }
+
+  function closeScheduleForm() {
+    var m = document.getElementById('sch-modal');
+    if (m && m.parentNode) m.parentNode.removeChild(m);
   }
 
   // ------------------------------------------------------------------ форма компании

@@ -1,0 +1,154 @@
+name: build
+
+# Собираем на каждый пуш и PR. Артефакты — только для master и тегов:
+# иначе каждый эксперимент в ветке копит гигабайты ZIP-ов в хранилище Actions.
+on:
+  push:
+    branches: [master, main]
+    tags: ['v*']
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build:
+    name: Сборка и упаковка
+    runs-on: windows-latest
+
+    steps:
+      - name: Получение исходников
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Установка .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Версия сборки
+        id: version
+        shell: pwsh
+        run: |
+          $props = Get-Content 'Directory.Build.props' -Raw
+          $version = if ($props -match '<VersionPrefix>([^<]+)</VersionPrefix>') { $Matches[1].Trim() } else { '0.0.0' }
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            # Тег вида v1.2.3 задаёт версию: артефакт должен совпадать с релизом.
+            $tag = '${{ github.ref_name }}' -replace '^v', ''
+            if ($tag) { $version = $tag }
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Версия: $version"
+
+      - name: Восстановление зависимостей
+        run: dotnet restore BackupDotNet.sln
+
+      - name: Сборка (Release)
+        run: dotnet build BackupDotNet.sln -c Release --no-restore -v m
+
+      - name: Проверка, что сторонних пакетов нет
+        shell: pwsh
+        run: |
+          # Правило проекта: ноль NuGet-пакетов. Ловим случайный PackageReference.
+          $bad = Select-String -Path 'src\*\*.csproj','Directory.Build.props' -Pattern 'PackageReference' -ErrorAction SilentlyContinue
+          if ($bad) {
+            Write-Host '::error::Найден PackageReference — проект должен собираться без сторонних пакетов'
+            $bad | ForEach-Object { Write-Host "  $($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
+            exit 1
+          }
+          Write-Host 'Сторонних пакетов нет — правило соблюдено.'
+
+      - name: Упаковка
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\package.ps1 -Version ${{ steps.version.outputs.version }}
+
+      - name: Проверка комплекта
+        shell: pwsh
+        run: |
+          $dir = "artifacts\BackupDotNet-${{ steps.version.outputs.version }}"
+          if (-not (Test-Path $dir)) { Write-Host "::error::Нет каталога $dir"; exit 1 }
+          foreach ($f in 'BackupDotNet.exe','public\index.html','config\settings.example.json','README.md') {
+            if (-not (Test-Path (Join-Path $dir $f))) {
+              Write-Host "::error::В комплекте нет $f"
+              exit 1
+            }
+          }
+          $exe = Join-Path $dir 'BackupDotNet.exe'
+          $size = (Get-ChildItem $dir -Recurse -File | Measure-Object Length -Sum).Sum
+          Write-Host ("Комплект собран: {0} ({1:N1} МБ)" -f $dir, ($size / 1MB))
+
+      - name: Артефакт — комплект
+        uses: actions/upload-artifact@v4
+        with:
+          name: BackupDotNet-${{ steps.version.outputs.version }}
+          path: artifacts/BackupDotNet-${{ steps.version.outputs.version }}/**
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Артефакт — ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: BackupDotNet-${{ steps.version.outputs.version }}-zip
+          path: artifacts/BackupDotNet-${{ steps.version.outputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Сводка
+        shell: pwsh
+        run: |
+          $dir = "artifacts\BackupDotNet-${{ steps.version.outputs.version }}"
+          $files = Get-ChildItem $dir -Recurse -File
+          $total = ($files | Measure-Object Length -Sum).Sum
+          @"
+          ### Сборка BackupDotNet ${{ steps.version.outputs.version }}
+
+          | | |
+          |---|---|
+          | Файлов | $($files.Count) |
+          | Размер | $([math]::Round($total / 1MB, 1)) МБ |
+          | Коммит | ``${{ github.sha }}`` |
+          | Ветка | ``${{ github.ref_name }}`` |
+
+          Артефакты: ``BackupDotNet-${{ steps.version.outputs.version }}`` (каталог)
+          и ``BackupDotNet-${{ steps.version.outputs.version }}-zip`` (архив).
+          "@ >> $env:GITHUB_STEP_SUMMARY
+
+  release:
+    name: Публикация релиза
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Получение исходников
+        uses: actions/checkout@v4
+
+      - name: Скачивание ZIP
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-zip'
+          path: release
+          merge-multiple: true
+
+      - name: Публикация
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.zip
+          generate_release_notes: true
+          body: |
+            ## BackupDotNet ${{ github.ref_name }}
+
+            Сборка под .NET Framework 4.8. Сторонних зависимостей нет.
+
+            **Установка:** распаковать архив и запустить `install.ps1` от имени администратора.
+            Подробности — в `README.md` внутри архива.
+          draft: false
+          prerelease: false

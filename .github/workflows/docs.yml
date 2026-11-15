@@ -1,0 +1,67 @@
+name: docs
+
+# Проверка документации: ссылки внутри репозитория должны существовать.
+# Дешёвая проверка, которая ловит самый частый вид гниения доков.
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - '**.md'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - '**.md'
+  workflow_dispatch:
+
+jobs:
+  links:
+    name: Ссылки в документации
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Получение исходников
+        uses: actions/checkout@v4
+
+      - name: Проверка относительных ссылок
+        shell: bash
+        run: |
+          set -e
+          fail=0
+          # Ищем markdown-ссылки вида [текст](путь), пропускаем http(s), якоря и mailto.
+          while IFS= read -r line; do
+            file="${line%%:*}"
+            rest="${line#*:}"
+            lineno="${rest%%:*}"
+            target="${rest#*:}"
+            # Отрезаем якорь: файл может существовать, а якорь — уже нет.
+            path="${target%%#*}"
+            [ -z "$path" ] && continue
+            case "$path" in
+              http*|mailto:*|'#'*) continue ;;
+            esac
+            dir=$(dirname "$file")
+            if [ ! -e "$dir/$path" ] && [ ! -e "$path" ]; then
+              echo "::error file=$file,line=$lineno::Битая ссылка: $target"
+              fail=1
+            fi
+          done < <(grep -rnoE '\]\([^)]+\)' --include='*.md' . \
+                   | sed -E 's/\]\(/:/; s/\)$//' \
+                   | sed -E 's/^\.\///' \
+                   | awk -F: '{print $1":"$2":"$3}')
+          if [ "$fail" -ne 0 ]; then
+            echo "Найдены битые ссылки."
+            exit 1
+          fi
+          echo "Все относительные ссылки целы."
+
+      - name: Проверка обязательных файлов
+        shell: bash
+        run: |
+          set -e
+          for f in README.md ROADMAP.md CHANGELOG.md AGENTS.md LICENSE docs/ARCHITECTURE.md; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Отсутствует обязательный файл $f"
+              exit 1
+            fi
+          done
+          echo "Обязательные файлы на месте."

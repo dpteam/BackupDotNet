@@ -39,13 +39,15 @@ public class ApiHandler
 
 	private readonly BackupJobQueue _backups;
 
+	private readonly BackupScheduler _schedule;
+
 	private static readonly Dictionary<char, string> Translit = BuildTranslit();
 
 	private static readonly Regex UserNameRe = new Regex("^[a-zA-Z0-9._-]{2,32}$", RegexOptions.Compiled);
 
 	private string CompaniesDir => Path.Combine(_settings.ConfigDir, "companies");
 
-	public ApiHandler(Settings settings, ConfigLoader config, DataStore store, Scheduler scheduler, Auth auth, AuditLog audit, AgentRegistry agents, DeployManager deploy, OpQueue ops, string prefix, BackupJobQueue backups)
+	public ApiHandler(Settings settings, ConfigLoader config, DataStore store, Scheduler scheduler, Auth auth, AuditLog audit, AgentRegistry agents, DeployManager deploy, OpQueue ops, string prefix, BackupJobQueue backups, BackupScheduler schedule)
 	{
 		_settings = settings;
 		_config = config;
@@ -58,6 +60,7 @@ public class ApiHandler
 		_ops = ops;
 		_prefix = prefix ?? "";
 		_backups = backups;
+		_schedule = schedule;
 	}
 
 	public void Handle(HttpListenerContext ctx)
@@ -253,6 +256,31 @@ public class ApiHandler
 			{
 				HandleRetentionApply(ctx, session);
 				return;
+			}
+			if (path == "/api/backup/schedules" && method == "GET")
+			{
+				HandleSchedulesList(ctx, session);
+				return;
+			}
+			if (path == "/api/backup/schedules" && method == "POST")
+			{
+				HandleScheduleSave(ctx, session);
+				return;
+			}
+			if (path.StartsWith("/api/backup/schedules/"))
+			{
+				string rest = path.Substring("/api/backup/schedules/".Length);
+				if (rest.EndsWith("/run") && method == "POST")
+				{
+					string rid = rest.Substring(0, rest.Length - "/run".Length);
+					HandleScheduleRun(ctx, session, rid);
+					return;
+				}
+				if (method == "DELETE")
+				{
+					HandleScheduleDelete(ctx, session, rest);
+					return;
+				}
 			}
 			if (path.StartsWith("/api/company/"))
 			{
@@ -1276,8 +1304,120 @@ public class ApiHandler
 		WriteJson(ctx, report, 200);
 	}
 
-	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)
+	/// <summary>GET /api/backup/schedules — список расписаний с вычисленным «следующим запуском».</summary>
+	private void HandleSchedulesList(HttpListenerContext ctx, SessionInfo si)
 	{
+		if (_schedule == null)
+		{
+			WriteJson(ctx, Json.Obj("error", "планировщик бэкапов не инициализирован"), 503);
+			return;
+		}
+		List<object> list = new List<object>();
+		foreach (BackupSchedule s in _schedule.List())
+		{
+			list.Add(s.ToJson());
+		}
+		Dictionary<string, object> res = Json.Obj();
+		res["schedules"] = list;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>POST /api/backup/schedules — создать или обновить расписание.</summary>
+	private void HandleScheduleSave(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		if (_schedule == null)
+		{
+			WriteJson(ctx, Json.Obj("error", "планировщик бэкапов не инициализирован"), 503);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		BackupSchedule s = BackupSchedule.FromJson(body);
+		if (string.IsNullOrWhiteSpace(s.Id))
+		{
+			s.Id = SlugifySchedule(s.Title);
+		}
+		List<string> problems = _schedule.Save(s);
+		if (problems.Count > 0)
+		{
+			WriteJson(ctx, Json.Obj("error", string.Join("; ", problems.ToArray()), "problems", ToObjectList(problems)), 400);
+			return;
+		}
+		_audit.Write(si.User, "backup.schedule.save", s.Id, ClientIp(ctx));
+		Dictionary<string, object> res = Json.Obj();
+		res["ok"] = true;
+		res["schedule"] = s.ToJson();
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>DELETE /api/backup/schedules/&lt;id&gt; — убрать расписание.</summary>
+	private void HandleScheduleDelete(HttpListenerContext ctx, SessionInfo si, string id)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		string error = "";
+		if (_schedule == null || !_schedule.Delete(Uri.UnescapeDataString(id ?? ""), out error))
+		{
+			WriteJson(ctx, Json.Obj("error", string.IsNullOrEmpty(error) ? "расписание не найдено" : error), 404);
+			return;
+		}
+		_audit.Write(si.User, "backup.schedule.delete", id, ClientIp(ctx));
+		WriteJson(ctx, Json.Obj("ok", true), 200);
+	}
+
+	/// <summary>POST /api/backup/schedules/&lt;id&gt;/run — запустить расписание сейчас.</summary>
+	private void HandleScheduleRun(HttpListenerContext ctx, SessionInfo si, string id)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		string error = "";
+		if (_schedule == null || !_schedule.RunNow(Uri.UnescapeDataString(id ?? ""), si.User, out error))
+		{
+			WriteJson(ctx, Json.Obj("error", string.IsNullOrEmpty(error) ? "расписание не найдено" : error), 400);
+			return;
+		}
+		_audit.Write(si.User, "backup.schedule.run", id, ClientIp(ctx));
+		WriteJson(ctx, Json.Obj("ok", true), 200);
+	}
+
+	/// <summary>Идентификатор расписания из названия: латиница, цифры, дефис.</summary>
+	private static string SlugifySchedule(string title)
+	{
+		if (string.IsNullOrWhiteSpace(title))
+		{
+			return "schedule-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+		}
+		System.Text.StringBuilder sb = new System.Text.StringBuilder();
+		foreach (char ch in title.Trim().ToLowerInvariant())
+		{
+			if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))
+			{
+				sb.Append(ch);
+			}
+			else if (sb.Length > 0 && sb[sb.Length - 1] != '-')
+			{
+				sb.Append('-');
+			}
+		}
+		string s = sb.ToString().Trim('-');
+		if (s.Length == 0)
+		{
+			s = "schedule-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+		}
+		return s;
+	}
+
+	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)	{
 		Dictionary<string, object> d = Json.Obj();
 		d["agentName"] = _settings.AgentName;
 		d["dataDir"] = _settings.DataDir;

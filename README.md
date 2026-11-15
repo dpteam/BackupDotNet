@@ -8,6 +8,9 @@
 
 .NET Framework 4.8 · Windows · работает в закрытом контуре · без NuGet
 
+[![build](https://github.com/dpteam/BackupDotNet/actions/workflows/build.yml/badge.svg)](https://github.com/dpteam/BackupDotNet/actions/workflows/build.yml)
+[![docs](https://github.com/dpteam/BackupDotNet/actions/workflows/docs.yml/badge.svg)](https://github.com/dpteam/BackupDotNet/actions/workflows/docs.yml)
+
 </div>
 
 ---
@@ -232,6 +235,26 @@ reference/                # сторонние исходники, сохран�
 - [docs/DEPLOY.md](docs/DEPLOY.md) — установка, служба, обновление, удалённые агенты
 - [docs/ZABBIX.md](docs/ZABBIX.md) — интеграция с Zabbix
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — сборка, отладка, стиль кода
+
+## Сборка и релизы
+
+GitHub Actions собирает проект на каждый пуш и PR:
+
+| Что | Когда | Результат |
+|---|---|---|
+| Сборка + проверка «ноль пакетов» | каждый пуш, PR | статус в PR |
+| Артефакты (каталог + ZIP) | master, теги | 30 дней в Actions |
+| GitHub Release с ZIP | тег `v*` | релиз с заметками |
+
+Чтобы выпустить версию:
+
+```powershell
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+Версия из тега подставляется в артефакт и релиз. Локально то же самое:
+`powershell -File tools\package.ps1 -Version 1.1.0`.
 
 ## Лицензия
 
