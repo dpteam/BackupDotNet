@@ -76,6 +76,54 @@ public class Settings
 
 	public int LogKeepDays = 90;
 
+	// ------------------------------------------------------------------ уведомления
+
+	public bool NotifyEnabled;
+
+	public bool NotifyOnFail = true;
+
+	public bool NotifyOnWarn = true;
+
+	public bool NotifyOnRecover = true;
+
+	public bool NotifyOnNoData;
+
+	public int NotifyMinIntervalMinutes = 30;
+
+	public string NotifyQuietFrom = "";
+
+	public string NotifyQuietTo = "";
+
+	// SMTP
+	public bool NotifySmtpEnabled;
+
+	public string NotifySmtpHost = "";
+
+	public int NotifySmtpPort = 25;
+
+	public bool NotifySmtpUseSsl;
+
+	public string NotifySmtpUser = "";
+
+	public string NotifySmtpPassword = "";
+
+	public string NotifySmtpPasswordSecret = "";
+
+	public string NotifySmtpFrom = "";
+
+	public List<string> NotifySmtpTo = new List<string>();
+
+	public int NotifySmtpTimeoutSeconds = 20;
+
+	// Telegram
+	public bool NotifyTelegramEnabled;
+
+	public string NotifyTelegramToken = "";
+
+	public string NotifyTelegramTokenSecret = "";
+
+	public List<string> NotifyTelegramChats = new List<string>();
+
 	public static Settings FromJson(Dictionary<string, object> root)
 	{
 		Settings s = new Settings();
@@ -125,6 +173,79 @@ public class Settings
 		s.LogLevel = Json.GetStr(lg, "level", s.LogLevel);
 		s.LogMaxMb = Json.Int(Json.Get(lg, "maxFileSizeMb"), s.LogMaxMb);
 		s.LogKeepDays = Json.Int(Json.Get(lg, "keepDays"), s.LogKeepDays);
+
+		Dictionary<string, object> nt = Json.AsObject(Json.Get(root, "notifications"));
+		s.NotifyEnabled = Json.Bool(Json.Get(nt, "enabled"), s.NotifyEnabled);
+		Dictionary<string, object> on = Json.AsObject(Json.Get(nt, "on"));
+		s.NotifyOnFail = Json.Bool(Json.Get(on, "fail"), s.NotifyOnFail);
+		s.NotifyOnWarn = Json.Bool(Json.Get(on, "warn"), s.NotifyOnWarn);
+		s.NotifyOnRecover = Json.Bool(Json.Get(on, "recover"), s.NotifyOnRecover);
+		s.NotifyOnNoData = Json.Bool(Json.Get(on, "nodata"), s.NotifyOnNoData);
+		s.NotifyMinIntervalMinutes = Json.Int(Json.Get(nt, "minIntervalMinutes"), s.NotifyMinIntervalMinutes);
+		Dictionary<string, object> quiet = Json.AsObject(Json.Get(nt, "quietHours"));
+		s.NotifyQuietFrom = Json.GetStr(quiet, "from", s.NotifyQuietFrom);
+		s.NotifyQuietTo = Json.GetStr(quiet, "to", s.NotifyQuietTo);
+
+		Dictionary<string, object> smtp = Json.AsObject(Json.Get(nt, "smtp"));
+		s.NotifySmtpEnabled = Json.Bool(Json.Get(smtp, "enabled"), s.NotifySmtpEnabled);
+		s.NotifySmtpHost = Json.GetStr(smtp, "host", s.NotifySmtpHost);
+		s.NotifySmtpPort = Json.Int(Json.Get(smtp, "port"), s.NotifySmtpPort);
+		s.NotifySmtpUseSsl = Json.Bool(Json.Get(smtp, "useSsl"), s.NotifySmtpUseSsl);
+		s.NotifySmtpUser = Json.GetStr(smtp, "username", s.NotifySmtpUser);
+		s.NotifySmtpPassword = Json.GetStr(smtp, "password", s.NotifySmtpPassword);
+		s.NotifySmtpPasswordSecret = Json.GetStr(smtp, "passwordSecret", s.NotifySmtpPasswordSecret);
+		s.NotifySmtpFrom = Json.GetStr(smtp, "from", s.NotifySmtpFrom);
+		s.NotifySmtpTimeoutSeconds = Json.Int(Json.Get(smtp, "timeoutSeconds"), s.NotifySmtpTimeoutSeconds);
+		s.NotifySmtpTo = ReadStringList(Json.Get(smtp, "to"));
+
+		Dictionary<string, object> tg = Json.AsObject(Json.Get(nt, "telegram"));
+		s.NotifyTelegramEnabled = Json.Bool(Json.Get(tg, "enabled"), s.NotifyTelegramEnabled);
+		s.NotifyTelegramToken = Json.GetStr(tg, "token", s.NotifyTelegramToken);
+		s.NotifyTelegramTokenSecret = Json.GetStr(tg, "tokenSecret", s.NotifyTelegramTokenSecret);
+		s.NotifyTelegramChats = ReadStringList(Json.Get(tg, "chats"));
+
 		return s;
+	}
+
+	/// <summary>
+	/// Читает список строк: поддерживает и массив <c>["a","b"]</c>,
+	/// и строку через запятую <c>"a, b"</c> — так удобнее править руками.
+	/// </summary>
+	private static List<string> ReadStringList(object value)
+	{
+		List<string> list = new List<string>();
+		if (value == null)
+		{
+			return list;
+		}
+		// Важно различать «массив» и «строка»: пустой массив не должен
+		// проваливаться в разбор строки (иначе получим "System.Object[]").
+		// Парсер JSON отдаёт массивы как ArrayList или object[], не как List<object>.
+		bool isArray = value is System.Collections.ArrayList || value is object[] || value is List<object>;
+		if (isArray)
+		{
+			foreach (object o in Json.AsArray(value))
+			{
+				string s = Json.Str(o).Trim();
+				if (s.Length > 0)
+				{
+					list.Add(s);
+				}
+			}
+			return list;
+		}
+		string single = Json.Str(value).Trim();
+		if (single.Length > 0)
+		{
+			foreach (string part in single.Split(','))
+			{
+				string s = part.Trim();
+				if (s.Length > 0)
+				{
+					list.Add(s);
+				}
+			}
+		}
+		return list;
 	}
 }

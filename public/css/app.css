@@ -1224,6 +1224,8 @@ td.cell-click:active span { transform: scale(1.02); }
 
 .page-title .spacer { margin-left: auto; }
 
+.kv .err { color: var(--fail); }
+
 /* ---------------------------------------------------------------- живая проверка формы */
 
 .form-check {

@@ -49,5 +49,32 @@
     "level": "info",
     "maxFileSizeMb": 32,
     "keepDays": 90
+  },
+  "notifications": {
+    "enabled": false,
+    "on": {
+      "fail": true,
+      "warn": true,
+      "recover": true,
+      "nodata": false
+    },
+    "minIntervalMinutes": 30,
+    "quietHours": { "from": "", "to": "" },
+    "smtp": {
+      "enabled": false,
+      "host": "",
+      "port": 25,
+      "useSsl": false,
+      "username": "",
+      "passwordSecret": "smtp-password",
+      "from": "",
+      "to": [],
+      "timeoutSeconds": 20
+    },
+    "telegram": {
+      "enabled": false,
+      "tokenSecret": "telegram-token",
+      "chats": []
+    }
   }
 }

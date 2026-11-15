@@ -140,6 +140,9 @@ public class ApiHandler
 				return;
 			case "/api/diagnostics":
 				HandleDiagnostics(ctx, session);
+				return;
+			case "/api/notify/status":
+				HandleNotifyStatus(ctx, session);
 				return;			case "/api/users":
 				if (method == "GET")
 				{
@@ -203,6 +206,11 @@ public class ApiHandler
 			if (path == "/api/config/import" && method == "POST")
 			{
 				HandleConfigImport(ctx, session);
+				return;
+			}
+			if (path == "/api/notify/test" && method == "POST")
+			{
+				HandleNotifyTest(ctx, session);
 				return;
 			}
 			if (path.StartsWith("/api/company/"))
@@ -938,6 +946,48 @@ public class ApiHandler
 		AgentCtx agentCtx = new AgentCtx(_settings, _config, _store);
 		Dictionary<string, object> report = Diagnostics.Build(agentCtx, _scheduler, _prefix);
 		WriteJson(ctx, report, 200);
+	}
+
+	/// <summary>
+	/// GET /api/notify/status — состояние каналов уведомлений для страницы настроек.
+	/// </summary>
+	private void HandleNotifyStatus(HttpListenerContext ctx, SessionInfo si)
+	{
+		Notifier n = _scheduler?.Notifier;
+		if (n == null)
+		{
+			WriteJson(ctx, Json.Obj("error", "планировщик не запущен"), 503);
+			return;
+		}
+		WriteJson(ctx, n.Status(), 200);
+	}
+
+	/// <summary>
+	/// POST /api/notify/test — пробное уведомление, чтобы проверить настройки
+	/// до первой настоящей аварии. Только администратор.
+	/// </summary>
+	private void HandleNotifyTest(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		Notifier n = _scheduler?.Notifier;
+		if (n == null)
+		{
+			WriteJson(ctx, Json.Obj("error", "планировщик не запущен"), 503);
+			return;
+		}
+		string err = n.SendTest();
+		_audit.Write(si.User, "notify.test", err.Length == 0 ? "успешно" : err, ClientIp(ctx));
+		Dictionary<string, object> resp = Json.Obj();
+		resp["ok"] = err.Length == 0;
+		if (err.Length > 0)
+		{
+			resp["error"] = err;
+		}
+		WriteJson(ctx, resp, err.Length == 0 ? 200 : 400);
 	}
 
 	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)

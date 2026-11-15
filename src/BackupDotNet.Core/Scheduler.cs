@@ -22,6 +22,8 @@ public class Scheduler
 
 	private readonly ZabbixApi _api;
 
+	private readonly Notifier _notifier;
+
 	private Thread _thread;
 
 	private volatile bool _stopping;
@@ -33,6 +35,14 @@ public class Scheduler
 	private readonly object _producedSync = new object();
 
 	private readonly object _runSync = new object();
+
+	/// <summary>
+	/// Уведомления, накопленные за прогон. Отправляются после параллельных
+	/// проверок: сетевой вызов SMTP/Telegram не должен тормозить сбор данных.
+	/// </summary>
+	private readonly List<NotifyEvent> _pendingNotifications = new List<NotifyEvent>();
+
+	private readonly object _notifySync = new object();
 
 	public string Version = "1.0.0";
 
@@ -89,7 +99,11 @@ public class Scheduler
 		{
 			_api = new ZabbixApi(_settings.ZabbixApiUrl, _settings.ZabbixApiToken, _settings.ZabbixTimeoutSeconds);
 		}
+		_notifier = new Notifier(_settings, ctx.Config);
 	}
+
+	/// <summary>Уведомления: нужны странице настроек, диагностике и тестовой отправке.</summary>
+	public Notifier Notifier => _notifier;
 
 	public void Start()
 	{
@@ -131,6 +145,7 @@ public class Scheduler
 					RunCompanies(due);
 				}
 				FlushZabbixQueue();
+				FlushNotifyQueue();
 				SendHeartbeatIfNeeded();
 			}
 			catch (Exception ex)
@@ -263,8 +278,38 @@ public class Scheduler
 				_store.PruneJobs(c2.Id, jobs);
 			}
 		}
+		DispatchNotifications();
 		LastRunAt = DateTime.Now;
 		LastRunCount = actions.Count;
+	}
+
+	/// <summary>
+	/// Отправляет накопленные уведомления. Вызывается после прогона, вне
+	/// параллельного блока: сеть не должна задерживать проверки.
+	/// </summary>
+	private void DispatchNotifications()
+	{
+		List<NotifyEvent> batch;
+		lock (_notifySync)
+		{
+			if (_pendingNotifications.Count == 0)
+			{
+				return;
+			}
+			batch = new List<NotifyEvent>(_pendingNotifications);
+			_pendingNotifications.Clear();
+		}
+		foreach (NotifyEvent e in batch)
+		{
+			try
+			{
+				_notifier.Send(e);
+			}
+			catch (Exception ex)
+			{
+				Log.Warn("Уведомления: " + ex.Message);
+			}
+		}
 	}
 
 	public void RunAll()
@@ -370,9 +415,34 @@ public class Scheduler
 		foreach (CollectResult cr in results)
 		{
 			JobState prev = _store.GetState(company.Id, cr.Job);
+			// Снимок «было» нужен ДО записи: Record обновляет тот же объект JobState,
+			// и ссылка prev начала бы показывать уже новое состояние.
+			BackupStatus prevStatus = (prev == null) ? BackupStatus.Skip : prev.Status;
+			string prevTarget = (prev == null) ? "" : prev.Target;
+			bool hadPrev = prev != null;
+
 			BackupRun run = PolicyEngine.Evaluate(company, source, cr, prev);
 			_store.Record(run);
 			Track(company.Id, run.Job);
+
+			// Уведомление — только на смене состояния. Собираем здесь,
+			// отправляем после прогона (см. DispatchNotifications).
+			try
+			{
+				NotifyEvent evt = _notifier.BuildEvent(company, hadPrev, prevStatus, prevTarget, run);
+				if (evt != null)
+				{
+					lock (_notifySync)
+					{
+						_pendingNotifications.Add(evt);
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				Log.Warn("Уведомления: " + ex.Message);
+			}
+
 			total++;
 			if (run.Status == BackupStatus.Fail)
 			{
@@ -532,6 +602,19 @@ public class Scheduler
 			{
 				Log.Info("Zabbix: дослано из очереди " + sent + " значений");
 			}
+		}
+	}
+
+	/// <summary>Досылает уведомления, которые не ушли из-за недоступности канала.</summary>
+	private void FlushNotifyQueue()
+	{
+		try
+		{
+			_notifier?.FlushQueue();
+		}
+		catch (Exception ex)
+		{
+			Log.Warn("Уведомления: ошибка досылки — " + ex.Message);
 		}
 	}
 

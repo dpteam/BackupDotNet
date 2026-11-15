@@ -2518,6 +2518,10 @@
         '</div><div class="card-body" id="brand-box">' +
         '<div class="muted">Загрузка…</div></div></div>';
 
+      html += '<div class="card"><div class="card-head"><i class="fas fa-bell"></i> Уведомления' +
+        '<span class="spacer"></span><span class="muted" style="font-size:11px" id="notify-summary"></span>' +
+        '</div><div class="card-body" id="notify-box"><div class="muted">Загрузка…</div></div></div>';
+
       html += '<div class="card"><div class="card-head"><i class="fas fa-file-zipper"></i> Конфигурация' +
         '<span class="spacer"></span>' +
         '<span class="muted" style="font-size:11px">перенос между машинами</span>' +
@@ -2557,6 +2561,7 @@
 
       loadAgents();
       loadBrandingBox();
+      loadNotifyBox();
       wireConfigBundle();
 
       document.getElementById('pwd-form').addEventListener('submit', function (e) {
@@ -2572,6 +2577,80 @@
 
     }).catch(function (err) {
       view.innerHTML = '<div class="card"><div class="card-body">Ошибка: ' + esc(err.message) + '</div></div>';
+    });
+  }
+
+  // ------------------------------------------------------------------ уведомления
+
+  function loadNotifyBox() {
+    var box = document.getElementById('notify-box');
+    if (!box) return;
+
+    api('/api/notify/status').then(function (n) {
+      var summary = document.getElementById('notify-summary');
+      var channels = [];
+      if (n.smtp) channels.push('SMTP');
+      if (n.telegram) channels.push('Telegram');
+      if (summary) {
+        summary.textContent = n.enabled
+          ? (channels.length ? channels.join(' + ') : 'каналы не настроены')
+          : 'выключены';
+      }
+
+      var events = [];
+      if (n.onFail) events.push('сбой');
+      if (n.onWarn) events.push('внимание');
+      if (n.onRecover) events.push('восстановление');
+      if (n.onNoData) events.push('нет данных');
+
+      var html = '<div class="kv">' +
+        '<div class="k">Состояние</div><div>' + (n.enabled ? 'включены' : 'выключены') + '</div>' +
+        '<div class="k">Каналы</div><div>' + (channels.length ? esc(channels.join(' + ')) : '—') + '</div>' +
+        '<div class="k">О событиях</div><div>' + (events.length ? esc(events.join(', ')) : '—') + '</div>' +
+        '<div class="k">Не чаще</div><div>одно событие в ' + (n.minIntervalMinutes || 0) + ' мин</div>' +
+        '<div class="k">Тихие часы</div><div>' +
+          (n.quietFrom && n.quietTo ? esc(n.quietFrom + '–' + n.quietTo) : 'не заданы') + '</div>' +
+        '<div class="k">SMTP</div><div>' + (n.smtp
+          ? esc(n.smtpHost + ':' + n.smtpPort) + ' → ' + esc((n.smtpTo || []).join(', '))
+          : 'не настроен') + '</div>' +
+        '<div class="k">Telegram</div><div>' + (n.telegram
+          ? 'чатов: ' + (n.telegramChats || []).length
+          : 'не настроен') + '</div>' +
+        '<div class="k">Отправлено</div><div>' + (n.sent || 0) +
+          ' · ошибок ' + (n.failed || 0) + ' · подавлено ' + (n.suppressed || 0) + '</div>' +
+        '<div class="k">Очередь</div><div>' + (n.queueLength || 0) + ' событий ждут отправки</div>' +
+        (n.lastSentAt ? '<div class="k">Последнее</div><div>' + esc(fmtDateTime(n.lastSentAt)) + '</div>' : '') +
+        (n.lastError ? '<div class="k">Последняя ошибка</div><div class="err">' + esc(n.lastError) + '</div>' : '') +
+        '</div>';
+
+      html += '<div class="cfg-actions" style="margin-top:12px">' +
+        '<button class="btn btn-sm" id="notify-test"><i class="fas fa-paper-plane"></i> Отправить тест</button>' +
+        '<span class="muted" style="font-size:11.5px">настраивается в <code>config/settings.json</code> → ' +
+        '<code>notifications</code></span>' +
+        '</div><div id="notify-test-result"></div>';
+
+      box.innerHTML = html;
+
+      var btn = document.getElementById('notify-test');
+      if (btn) {
+        btn.addEventListener('click', function () {
+          btn.disabled = true;
+          btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Отправляю…';
+          api('/api/notify/test', { method: 'POST', body: {} }).then(function () {
+            document.getElementById('notify-test-result').innerHTML =
+              '<div class="cfg-note ok"><i class="fas fa-check-circle"></i> Тестовое уведомление отправлено</div>';
+            toast('Тест отправлен', 'ok');
+          }).catch(function (err) {
+            document.getElementById('notify-test-result').innerHTML =
+              '<div class="cfg-note error">' + esc(err.message) + '</div>';
+          }).then(function () {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-paper-plane"></i> Отправить тест';
+          });
+        });
+      }
+    }).catch(function (err) {
+      box.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
     });
   }
 
