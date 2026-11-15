@@ -42,6 +42,40 @@ public class Scheduler
 
 	public int LastRunCount;
 
+	/// <summary>Когда завершился последний тик планировщика.</summary>
+	public DateTime? LastTickAt;
+
+	/// <summary>Сколько длился последний тик (секунды).</summary>
+	public double LastTickDurationSeconds;
+
+	/// <summary>Сколько тиков отработано с момента запуска.</summary>
+	public long Ticks;
+
+	/// <summary>Сколько тиков завершились исключением.</summary>
+	public long TickErrors;
+
+	/// <summary>Идёт ли планировщик прямо сейчас.</summary>
+	public bool IsRunning
+	{
+		get
+		{
+			Thread t = _thread;
+			return t != null && t.IsAlive && !_stopping;
+		}
+	}
+
+	/// <summary>Путь к очереди Zabbix (пустая строка, если отправка не настроена).</summary>
+	public string ZabbixQueuePath
+	{
+		get
+		{
+			return Path.Combine(_settings.DataDir, "state", "zabbix-queue.ndjson");
+		}
+	}
+
+	/// <summary>Настроена ли отправка в Zabbix.</summary>
+	public bool ZabbixEnabled => _sender != null;
+
 	public Scheduler(AgentCtx ctx)
 	{
 		_ctx = ctx;
@@ -87,6 +121,7 @@ public class Scheduler
 		SleepInterruptible(3000);
 		while (!_stopping)
 		{
+			DateTime tickStart = DateTime.Now;
 			try
 			{
 				List<Company> due = PickDue();
@@ -101,7 +136,13 @@ public class Scheduler
 			catch (Exception ex)
 			{
 				Log.Error("Ошибка в цикле планировщика", ex);
+				TickErrors++;
 			}
+			// Отставание = сколько тик занял сверх ожидаемого.
+			// Если оно стабильно растёт, значит проверки не успевают за интервалом.
+			LastTickAt = DateTime.Now;
+			LastTickDurationSeconds = (LastTickAt.Value - tickStart).TotalSeconds;
+			Ticks++;
 			SleepInterruptible(Math.Max(5, _settings.TickSeconds) * 1000);
 		}
 		Log.Info("Планировщик остановлен");

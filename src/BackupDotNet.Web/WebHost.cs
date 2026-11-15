@@ -159,7 +159,7 @@ public class WebHost
 			string path = ctx.Request.Url.AbsolutePath;
 			if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
 			{
-				new ApiHandler(_settings, _config, _store, _scheduler, _auth, _audit, Agents, Deploy, Ops).Handle(ctx);
+				new ApiHandler(_settings, _config, _store, _scheduler, _auth, _audit, Agents, Deploy, Ops, ActualPrefix).Handle(ctx);
 			}
 			else
 			{

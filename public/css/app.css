@@ -1182,6 +1182,48 @@ td.cell-click:active span { transform: scale(1.02); }
   tab-size: 4;
 }
 
+/* ---------------------------------------------------------------- здоровье агента */
+
+.health-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; margin-bottom: 16px;
+  border: 1px solid var(--border); border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.health-banner i { font-size: 22px; }
+.health-banner.ok    { border-left-color: var(--ok); }
+.health-banner.ok i  { color: var(--ok); }
+.health-banner.warn  { border-left-color: var(--warn); }
+.health-banner.warn i { color: var(--warn); }
+.health-banner.error { border-left-color: var(--fail); }
+.health-banner.error i { color: var(--fail); }
+.health-banner .hb-title { font-weight: 700; font-size: 13.5px; color: var(--ink); }
+.health-banner .hb-sub { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+.health-banner .hb-time { font-size: 11.5px; white-space: nowrap; }
+
+.check-list { display: flex; flex-direction: column; }
+.check-row {
+  display: flex; gap: 11px; align-items: flex-start;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.check-row:last-child { border-bottom: none; }
+.check-row .check-icon { font-size: 15px; margin-top: 1px; flex: 0 0 15px; }
+.check-row.ok .check-icon    { color: var(--ok); }
+.check-row.warn .check-icon  { color: var(--warn); }
+.check-row.error .check-icon { color: var(--fail); }
+.check-body { min-width: 0; }
+.check-title { font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.check-msg { font-size: 12px; color: var(--ink-soft); margin-top: 1px; }
+.check-hint {
+  font-size: 11.5px; color: var(--muted); margin-top: 3px;
+  padding-left: 9px; border-left: 2px solid var(--border);
+}
+
+.page-title .spacer { margin-left: auto; }
+
 /* ---------------------------------------------------------------- печать */
 
 @media print {

@@ -34,13 +34,15 @@ public class ApiHandler
 
 	private readonly OpQueue _ops;
 
+	private readonly string _prefix;
+
 	private static readonly Dictionary<char, string> Translit = BuildTranslit();
 
 	private static readonly Regex UserNameRe = new Regex("^[a-zA-Z0-9._-]{2,32}$", RegexOptions.Compiled);
 
 	private string CompaniesDir => Path.Combine(_settings.ConfigDir, "companies");
 
-	public ApiHandler(Settings settings, ConfigLoader config, DataStore store, Scheduler scheduler, Auth auth, AuditLog audit, AgentRegistry agents, DeployManager deploy, OpQueue ops)
+	public ApiHandler(Settings settings, ConfigLoader config, DataStore store, Scheduler scheduler, Auth auth, AuditLog audit, AgentRegistry agents, DeployManager deploy, OpQueue ops, string prefix)
 	{
 		_settings = settings;
 		_config = config;
@@ -51,6 +53,7 @@ public class ApiHandler
 		_agents = agents ?? new AgentRegistry(settings.ConfigDir);
 		_deploy = deploy;
 		_ops = ops;
+		_prefix = prefix ?? "";
 	}
 
 	public void Handle(HttpListenerContext ctx)
@@ -134,6 +137,9 @@ public class ApiHandler
 				return;
 			case "/api/logs/tail":
 				HandleLogTail(ctx, session);
+				return;
+			case "/api/diagnostics":
+				HandleDiagnostics(ctx, session);
 				return;			case "/api/users":
 				if (method == "GET")
 				{
@@ -911,6 +917,17 @@ public class ApiHandler
 		res["lines"] = lines;
 		res["text"] = Log.Tail(full, lines, 1024 * 1024);
 		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// GET /api/diagnostics — самодиагностика агента для страницы «Здоровье».
+	/// Доступна всем авторизованным: смотреть полезно и оператору, и админу.
+	/// </summary>
+	private void HandleDiagnostics(HttpListenerContext ctx, SessionInfo si)
+	{
+		AgentCtx agentCtx = new AgentCtx(_settings, _config, _store);
+		Dictionary<string, object> report = Diagnostics.Build(agentCtx, _scheduler, _prefix);
+		WriteJson(ctx, report, 200);
 	}
 
 	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)

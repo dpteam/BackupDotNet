@@ -246,6 +246,7 @@
     parseHash();
     setActiveNav();
     stopLogsPolling();
+    stopHealthPolling();
 
     if (state.route === 'month') return renderMonth();
     if (state.route === 'uptime') return renderUptime();
@@ -254,6 +255,7 @@
     if (state.route === 'deploy') return renderDeploy();
     if (state.route === 'manage') return renderManage();
     if (state.route === 'logs') return renderLogs();
+    if (state.route === 'health') return renderHealth();
     if (state.route === 'settings') return renderSettings();
     if (state.route === 'company') {
       if (state.sub === 'edit' || state.companyId === 'new') return renderCompanyForm(state.companyId);
@@ -2644,6 +2646,203 @@
     }).catch(function (err) {
       view.innerHTML = '<div class="card"><div class="card-body">Ошибка: ' + esc(err.message) + '</div></div>';
     });
+  }
+
+  // ------------------------------------------------------------------ здоровье агента
+
+  var healthState = { timer: null, busy: false };
+
+  function stopHealthPolling() {
+    if (healthState.timer) {
+      clearInterval(healthState.timer);
+      healthState.timer = null;
+    }
+  }
+
+  function fmtUptime(sec) {
+    sec = Number(sec) || 0;
+    if (sec < 60) return sec + ' с';
+    var m = Math.floor(sec / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+    if (d > 0) return d + ' д ' + (h % 24) + ' ч';
+    if (h > 0) return h + ' ч ' + (m % 60) + ' мин';
+    return m + ' мин';
+  }
+
+  function healthIcon(status) {
+    if (status === 'ok') return 'fa-check-circle';
+    if (status === 'warn') return 'fa-exclamation-triangle';
+    return 'fa-times-circle';
+  }
+
+  function healthBanner(d) {
+    var kind = d.errors > 0 ? 'error' : (d.warnings > 0 ? 'warn' : 'ok');
+    var icon = healthIcon(kind);
+    var title = d.errors > 0
+      ? 'Есть проблемы: ' + d.errors
+      : (d.warnings > 0 ? 'Работает, но есть замечания: ' + d.warnings : 'Всё в порядке');
+    var sub = d.errors > 0
+      ? 'Проверьте пункты ниже — часть из них влияет на сбор данных.'
+      : (d.warnings > 0
+        ? 'Агент работает; замечания стоит разобрать, пока они не стали проблемами.'
+        : 'Все проверки самодиагностики пройдены.');
+    return '<div class="health-banner ' + kind + '">' +
+      '<i class="fas ' + icon + '"></i>' +
+      '<div><div class="hb-title">' + esc(title) + '</div>' +
+      '<div class="hb-sub">' + esc(sub) + '</div></div>' +
+      '<span class="spacer"></span>' +
+      '<span class="hb-time muted">' + esc(fmtDateTime(d.generatedAt)) + '</span>' +
+      '</div>';
+  }
+
+  function healthChecks(d) {
+    var order = { error: 0, warn: 1, ok: 2 };
+    var list = (d.checks || []).slice().sort(function (a, b) {
+      return (order[a.status] || 9) - (order[b.status] || 9);
+    });
+    var html = '<div class="card"><div class="card-head"><i class="fas fa-clipboard-check"></i> Проверки</div>' +
+      '<div class="card-body" style="padding:0"><div class="check-list">';
+    if (!list.length) {
+      html += '<div class="check-row"><span class="muted">Проверок нет</span></div>';
+    }
+    list.forEach(function (c) {
+      html += '<div class="check-row ' + esc(c.status) + '">' +
+        '<i class="fas ' + healthIcon(c.status) + ' check-icon"></i>' +
+        '<div class="check-body">' +
+        '<div class="check-title">' + esc(c.title) + '</div>' +
+        '<div class="check-msg">' + esc(c.message) + '</div>' +
+        (c.hint ? '<div class="check-hint">' + esc(c.hint) + '</div>' : '') +
+        '</div></div>';
+    });
+    html += '</div></div></div>';
+    return html;
+  }
+
+  function healthStats(d) {
+    var a = d.agent || {};
+    var p = a.process || {};
+    var disk = d.disk || {};
+    var sch = d.scheduler || {};
+    var cnt = d.counts || {};
+    var tiles =
+      stat('ok', 'Работает', fmtUptime(a.uptimeSeconds), 'версия ' + (d.version || '—')) +
+      stat('', 'Память', p.workingSetMb ? p.workingSetMb + ' МБ' : '—', 'потоков: ' + (p.threads || '—')) +
+      stat(disk.freePercent != null && disk.freePercent < 10 ? 'warn' : '', 'Свободно на диске',
+        disk.freeGb != null ? disk.freeGb + ' ГБ' : '—', 'из ' + (disk.totalGb || '—') + ' ГБ') +
+      stat('', 'Заданий', cnt.jobs || 0, 'источников: ' + (cnt.sourcesEnabled || 0) + '/' + (cnt.sources || 0)) +
+      stat(sch.tickErrors > 0 ? 'warn' : '', 'Тиков', sch.ticks || 0,
+        'ошибок: ' + (sch.tickErrors || 0) + ' · ' + (sch.lastTickDurationSeconds || 0) + ' с');
+    return '<div class="stats">' + tiles + '</div>';
+  }
+
+  function healthDetails(d) {
+    var a = d.agent || {};
+    var p = a.process || {};
+    var paths = d.paths || {};
+    var sizes = d.sizes || {};
+    var sch = d.scheduler || {};
+    var web = d.web || {};
+    var zbx = d.zabbix || {};
+    var logs = d.logs || {};
+
+    var html = '';
+
+    html += '<div class="card"><div class="card-head"><i class="fas fa-server"></i> Агент</div><div class="card-body">' +
+      '<div class="kv">' +
+      '<div class="k">Продукт</div><div>' + esc(a.name) + ' ' + esc(d.version || '') + '</div>' +
+      '<div class="k">Машина</div><div>' + esc(a.machineName) + '</div>' +
+      '<div class="k">ОС</div><div>' + esc(a.os) + '</div>' +
+      '<div class="k">Среда</div><div>.NET ' + esc(a.runtime) + (a.is64Bit ? ' · x64' : ' · x86') + '</div>' +
+      '<div class="k">Учётная запись</div><div>' + esc(a.userName) +
+        (a.isAdmin ? ' <span class="tag">администратор</span>' : '') + '</div>' +
+      '<div class="k">Запущен</div><div>' + esc(fmtDateTime(a.startedAt)) + ' (' + esc(fmtUptime(a.uptimeSeconds)) + ')</div>' +
+      '<div class="k">Память</div><div>' + (p.workingSetMb || '—') + ' МБ (private ' + (p.privateMb || '—') + ' МБ)</div>' +
+      '<div class="k">Потоков / хэндлов</div><div>' + (p.threads || '—') + ' / ' + (p.handles || '—') + '</div>' +
+      '</div></div></div>';
+
+    html += '<div class="card"><div class="card-head"><i class="fas fa-folder-tree"></i> Пути и размеры</div><div class="card-body">' +
+      '<div class="kv">' +
+      '<div class="k">Программа</div><div><code>' + esc(paths.install) + '</code></div>' +
+      '<div class="k">Данные</div><div><code>' + esc(paths.data) + '</code> · ' + (sizes.dataMb || 0) + ' МБ</div>' +
+      '<div class="k">Журналы</div><div><code>' + esc(paths.logs) + '</code> · ' + (sizes.logsMb || 0) + ' МБ</div>' +
+      '<div class="k">Состояние</div><div>' + (sizes.stateMb || 0) + ' МБ</div>' +
+      '<div class="k">История</div><div>' + (sizes.historyMb || 0) + ' МБ</div>' +
+      '<div class="k">Кэш</div><div>' + (sizes.cacheMb || 0) + ' МБ</div>' +
+      '<div class="k">Диск</div><div>' + esc(d.disk.drive || '—') + ' · свободно ' +
+        (d.disk.freeGb || 0) + ' из ' + (d.disk.totalGb || 0) + ' ГБ (' + (d.disk.freePercent || 0) + '%)</div>' +
+      '</div></div></div>';
+
+    html += '<div class="card"><div class="card-head"><i class="fas fa-clock"></i> Планировщик и веб</div><div class="card-body">' +
+      '<div class="kv">' +
+      '<div class="k">Состояние</div><div>' + (sch.running ? 'работает' : 'остановлен') + '</div>' +
+      '<div class="k">Интервал</div><div>' + (sch.tickSeconds || '—') + ' с</div>' +
+      '<div class="k">Последний тик</div><div>' + (sch.lastTickAt ? esc(fmtDateTime(sch.lastTickAt)) : '—') +
+        (sch.secondsSinceTick >= 0 ? ' · ' + sch.secondsSinceTick + ' с назад' : '') + '</div>' +
+      '<div class="k">Длительность тика</div><div>' + (sch.lastTickDurationSeconds || 0) + ' с</div>' +
+      '<div class="k">Последний прогон</div><div>' + (sch.lastRunAt ? esc(fmtDateTime(sch.lastRunAt)) +
+        ' · источников: ' + (sch.lastRunCount || 0) : 'ещё не было') + '</div>' +
+      '<div class="k">Адрес</div><div><code>' + esc(web.prefix || '—') + '</code>' +
+        (web.localOnly ? ' <span class="tag">только локально</span>' : '') + '</div>' +
+      '<div class="k">Авторизация</div><div>' + (web.requireAuth ? 'включена' : 'выключена') + '</div>' +
+      '<div class="k">Журнал</div><div>уровень ' + esc(logs.level) + ' · файлов ' + (logs.files || 0) +
+        ' · <code>' + esc(logs.current ? logs.current.split(/[\\/]/).pop() : '—') + '</code></div>' +
+      '</div></div></div>';
+
+    html += '<div class="card"><div class="card-head"><i class="fas fa-broadcast-tower"></i> Zabbix</div><div class="card-body">' +
+      '<div class="kv">' +
+      '<div class="k">Отправка</div><div>' + (zbx.enabled ? 'включена' : 'выключена') + '</div>' +
+      '<div class="k">Сервер</div><div>' + (zbx.server ? esc(zbx.server) + ':' + zbx.port : '—') + '</div>' +
+      '<div class="k">Очередь</div><div>' + (zbx.queueEntries || 0) + ' значений · ' +
+        ((zbx.queueBytes || 0) / 1024).toFixed(1) + ' КБ</div>' +
+      '</div></div></div>';
+
+    if (d.config && d.config.errors && d.config.errors.length) {
+      html += '<div class="card"><div class="card-head"><i class="fas fa-exclamation-triangle" style="color:var(--warn)"></i> Ошибки конфигурации</div>' +
+        '<div class="card-body"><ul style="margin:0;padding-left:18px">' +
+        d.config.errors.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') +
+        '</ul></div></div>';
+    }
+
+    return html;
+  }
+
+  function renderHealth() {
+    view.innerHTML = '<div class="muted">Загрузка…</div>';
+    stopHealthPolling();
+
+    var built = false;
+
+    function load() {
+      if (healthState.busy) return;
+      healthState.busy = true;
+      api('/api/diagnostics').then(function (d) {
+        if (!built) {
+          view.innerHTML =
+            '<h2 class="page-title"><i class="fas fa-stethoscope"></i> Здоровье агента' +
+            '<span class="spacer"></span>' +
+            '<button class="btn btn-sm" id="health-refresh"><i class="fas fa-sync-alt"></i> Обновить</button>' +
+            '</h2>' +
+            '<div id="health-banner"></div>' +
+            '<div id="health-stats"></div>' +
+            '<div id="health-checks"></div>' +
+            '<div id="health-details"></div>';
+          document.getElementById('health-refresh').addEventListener('click', load);
+          built = true;
+        }
+        document.getElementById('health-banner').innerHTML = healthBanner(d);
+        document.getElementById('health-stats').innerHTML = healthStats(d);
+        document.getElementById('health-checks').innerHTML = healthChecks(d);
+        document.getElementById('health-details').innerHTML = healthDetails(d);
+      }).catch(function (err) {
+        if (!built) {
+          view.innerHTML = '<div class="card"><div class="card-body">Ошибка: ' + esc(err.message) + '</div></div>';
+        }
+      }).then(function () {
+        healthState.busy = false;
+      });
+    }
+
+    load();
+    healthState.timer = setInterval(load, 15000);
   }
 
   // ------------------------------------------------------------------ форма компании
