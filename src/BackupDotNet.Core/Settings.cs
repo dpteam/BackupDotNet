@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using BackupDotNet.Core.Backup;
 
 namespace BackupDotNet.Core;
 
@@ -99,6 +100,9 @@ public class Settings
 
 	/// <summary>Куда складывать бэкапы по умолчанию. Пусто — dataDir\backups\store.</summary>
 	public string BackupDestination = "";
+
+	/// <summary>Политика хранения копий бэкапов.</summary>
+	public RetentionPolicy BackupRetention = new RetentionPolicy();
 
 	// ------------------------------------------------------------------ уведомления
 
@@ -210,6 +214,7 @@ public class Settings
 
 		Dictionary<string, object> bk = Json.AsObject(Json.Get(root, "backup"));
 		s.BackupDestination = Json.GetStr(bk, "destination", s.BackupDestination);
+		s.BackupRetention = RetentionPolicy.FromJson(Json.AsObject(Json.Get(bk, "retention")));
 
 		Dictionary<string, object> nt = Json.AsObject(Json.Get(root, "notifications"));
 		s.NotifyEnabled = Json.Bool(Json.Get(nt, "enabled"), s.NotifyEnabled);

@@ -139,6 +139,14 @@ public class HyperVExportEngine : IBackupEngine
 		// можно удалять по политике хранения целиком.
 		string stamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss", CultureInfo.InvariantCulture);
 		string targetDir = Path.Combine(destRoot, SafeName(vmName) + "_" + stamp);
+		// Два бэкапа одной ВМ в одну секунду дали бы одинаковое имя.
+		// Разводим суффиксом, иначе вторая копия дописалась бы в первую.
+		int attempt = 1;
+		while (Directory.Exists(targetDir) && attempt < 100)
+		{
+			targetDir = Path.Combine(destRoot, SafeName(vmName) + "_" + stamp + "-" + attempt.ToString(CultureInfo.InvariantCulture));
+			attempt++;
+		}
 		try
 		{
 			Directory.CreateDirectory(targetDir);

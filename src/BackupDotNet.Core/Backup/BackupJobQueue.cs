@@ -28,6 +28,8 @@ public class BackupJobQueue
 
 	private readonly Queue<BackupJob> _queue = new Queue<BackupJob>();
 
+	private readonly Settings _settings;
+
 	private readonly Dictionary<string, CancellationTokenSource> _cancel =
 		new Dictionary<string, CancellationTokenSource>(StringComparer.OrdinalIgnoreCase);
 
@@ -37,6 +39,7 @@ public class BackupJobQueue
 
 	public BackupJobQueue(Settings settings)
 	{
+		_settings = settings;
 		_dir = Path.Combine(settings.DataDir, "backups", "jobs");
 		_jobsPath = Path.Combine(_dir, "index.json");
 		try
@@ -265,6 +268,10 @@ public class BackupJobQueue
 			}
 			Log.Info("Бэкап: задание " + job.Id + " завершено за " +
 				Math.Round((DateTime.Now - started).TotalSeconds) + " с, размер " + Fmt.Size(job.SizeBytes));
+
+			// После успешной копии прибираем старое: иначе диск заполнится
+			// молча, и узнаем мы об этом в самый неподходящий момент.
+			ApplyRetentionQuietly(job);
 		}
 		catch (BackupException ex)
 		{
@@ -309,6 +316,32 @@ public class BackupJobQueue
 
 	// ------------------------------------------------------------------ хранение
 
+	/// <summary>
+	/// Применяет политику хранения к каталогу, куда только что легла копия.
+	/// Ошибки не пробрасываются: неудачная уборка не должна портить статус
+	/// успешного бэкапа.
+	/// </summary>
+	private void ApplyRetentionQuietly(BackupJob job)
+	{
+		try
+		{
+			RetentionPolicy policy = _settings?.BackupRetention;
+			if (policy == null || !policy.IsActive)
+			{
+				return;
+			}
+			string root = Path.GetDirectoryName(job.Destination ?? "");
+			if (string.IsNullOrEmpty(root))
+			{
+				return;
+			}
+			BackupRetention.Apply(root, policy, dryRun: false);
+		}
+		catch (Exception ex)
+		{
+			Log.Warn("Бэкап: уборка по политике хранения не удалась — " + ex.Message);
+		}
+	}
 	private void Trim()
 	{
 		if (_jobs.Count <= KeepInMemory)

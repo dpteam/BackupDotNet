@@ -244,6 +244,16 @@ public class ApiHandler
 				HandleBackupCancel(ctx, session);
 				return;
 			}
+			if (path == "/api/backup/retention" && method == "GET")
+			{
+				HandleRetentionInfo(ctx, session);
+				return;
+			}
+			if (path == "/api/backup/retention/apply" && method == "POST")
+			{
+				HandleRetentionApply(ctx, session);
+				return;
+			}
 			if (path.StartsWith("/api/company/"))
 			{
 				string rest = path.Substring("/api/company/".Length);
@@ -1209,6 +1219,61 @@ public class ApiHandler
 			return _settings.BackupDestination;
 		}
 		return Path.Combine(_settings.DataDir, "backups", "store");
+	}
+
+	/// <summary>
+	/// GET /api/backup/retention — политика хранения и что сейчас лежит в каталоге.
+	/// </summary>
+	private void HandleRetentionInfo(HttpListenerContext ctx, SessionInfo si)
+	{
+		string root = DefaultBackupDestination();
+		RetentionPolicy policy = _settings.BackupRetention ?? new RetentionPolicy();
+		List<BackupCopy> copies = BackupRetention.Scan(root);
+
+		Dictionary<string, object> res = Json.Obj();
+		res["destination"] = root;
+		res["policy"] = policy.ToJson();
+
+		List<object> list = new List<object>();
+		long total = 0L;
+		foreach (BackupCopy c in copies)
+		{
+			Dictionary<string, object> d = Json.Obj();
+			d["name"] = Path.GetFileName(c.Path);
+			d["object"] = c.Name;
+			d["timestamp"] = c.Timestamp;
+			d["sizeBytes"] = c.SizeBytes;
+			list.Add(d);
+			total += c.SizeBytes;
+		}
+		res["copies"] = list;
+		res["count"] = copies.Count;
+		res["totalBytes"] = total;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// POST /api/backup/retention/apply — применить политику.
+	/// <c>dryRun=1</c> — только показать, что было бы удалено.
+	/// </summary>
+	private void HandleRetentionApply(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		bool dryRun = Query(ctx, "dryRun") == "1";
+		string root = DefaultBackupDestination();
+		RetentionPolicy policy = _settings.BackupRetention ?? new RetentionPolicy();
+		Dictionary<string, object> report = BackupRetention.Apply(root, policy, dryRun);
+		report["destination"] = root;
+		if (!dryRun)
+		{
+			_audit.Write(si.User, "backup.retention",
+				"удалено: " + Json.Int(Json.Get(report, "deletedCount")) + ", IP " + ClientIp(ctx), "backup");
+		}
+		WriteJson(ctx, report, 200);
 	}
 
 	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)

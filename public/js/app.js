@@ -3271,10 +3271,16 @@
         '</div><div class="card-body" style="padding:0"><div id="bk-jobs">' +
         '<div style="padding:16px" class="muted">Загрузка…</div></div></div></div>';
 
+      // --- хранение копий
+      html += '<div class="card"><div class="card-head"><i class="fas fa-clock-rotate-left"></i> Хранение копий' +
+        '<span class="spacer"></span><span class="muted" style="font-size:11px" id="ret-summary"></span>' +
+        '</div><div class="card-body" id="ret-box"><div class="muted">Загрузка…</div></div></div>';
+
       view.innerHTML = html;
       backupsState.built = true;
 
       loadBackupTargets();
+      loadRetentionBox();
 
       document.getElementById('bk-refresh-targets').addEventListener('click', loadBackupTargets);
 
@@ -3400,6 +3406,120 @@
       // тихо: следующая попытка через 2 секунды
     }).then(function () {
       backupsState.busy = false;
+    });
+  }
+
+  // ------------------------------------------------------------------ хранение копий бэкапов
+
+  function loadRetentionBox() {
+    var box = document.getElementById('ret-box');
+    if (!box) return;
+
+    api('/api/backup/retention').then(function (data) {
+      var p = data.policy || {};
+      var gfs = p.gfs || {};
+      var summary = document.getElementById('ret-summary');
+      if (summary) {
+        summary.textContent = p.active
+          ? 'копий: ' + (data.count || 0) + ' · ' + fmtSize(data.totalBytes)
+          : 'политика не настроена';
+      }
+
+      var html = '<div class="kv">' +
+        '<div class="k">Каталог</div><div><code>' + esc(data.destination) + '</code></div>' +
+        '<div class="k">Копий сейчас</div><div>' + (data.count || 0) + ' · ' + fmtSize(data.totalBytes) + '</div>';
+
+      if (p.active) {
+        var rules = [];
+        if (p.keepCount > 0) rules.push('последние ' + p.keepCount);
+        if (p.keepDays > 0) rules.push('моложе ' + p.keepDays + ' дн');
+        if (gfs.daily > 0) rules.push('дней: ' + gfs.daily);
+        if (gfs.weekly > 0) rules.push('недель: ' + gfs.weekly);
+        if (gfs.monthly > 0) rules.push('месяцев: ' + gfs.monthly);
+        html += '<div class="k">Правила</div><div>' + esc(rules.join(' · ')) + '</div>';
+        html += '<div class="k">Защита</div><div>' +
+          (p.protectLast ? 'последняя копия не удаляется' : 'ВНИМАНИЕ: защита выключена') + '</div>';
+        html += '<div class="k">Лимит</div><div>не более ' + p.maxDeletePerRun + ' удалений за проход</div>';
+      }
+      html += '</div>';
+
+      if (!p.active) {
+        html += '<p class="muted" style="margin:10px 0 0">Задайте <code>backup.retention</code> в ' +
+          '<code>config/settings.json</code>, чтобы старые копии удалялись автоматически.</p>';
+      }
+
+      if (state.me && state.me.canWrite) {
+        html += '<div class="cfg-actions" style="margin-top:12px">' +
+          '<button class="btn btn-sm" id="ret-preview"><i class="fas fa-eye"></i> Что будет удалено</button>' +
+          '<button class="btn btn-sm btn-danger" id="ret-apply"><i class="fas fa-broom"></i> Применить</button>' +
+          '</div><div id="ret-result"></div>';
+      }
+
+      // список копий
+      var copies = data.copies || [];
+      if (copies.length) {
+        html += '<div class="ret-list"><table class="cfg-table"><thead><tr>' +
+          '<th>Копия</th><th>Объект</th><th>Когда</th><th>Размер</th></tr></thead><tbody>';
+        copies.slice(0, 20).forEach(function (c) {
+          html += '<tr><td><code>' + esc(c.name) + '</code></td>' +
+            '<td>' + esc(c.object) + '</td>' +
+            '<td class="muted">' + esc(fmtDateTime(c.timestamp)) + '</td>' +
+            '<td>' + fmtSize(c.sizeBytes) + '</td></tr>';
+        });
+        html += '</tbody></table>';
+        if (copies.length > 20) {
+          html += '<p class="muted" style="font-size:11.5px;margin:6px 0 0">показаны 20 из ' + copies.length + '</p>';
+        }
+        html += '</div>';
+      }
+
+      box.innerHTML = html;
+
+      var preview = document.getElementById('ret-preview');
+      if (preview) {
+        preview.addEventListener('click', function () {
+          runRetention(true);
+        });
+      }
+      var apply = document.getElementById('ret-apply');
+      if (apply) {
+        apply.addEventListener('click', function () {
+          if (!confirm('Удалить копии, которые не подпадают под политику хранения?\n\n' +
+            'Действие необратимо. Последняя копия защищена.')) return;
+          runRetention(false);
+        });
+      }
+
+      function runRetention(dry) {
+        var res = document.getElementById('ret-result');
+        res.innerHTML = '<div class="cfg-note"><i class="fas fa-spinner fa-spin"></i> ' +
+          (dry ? 'Проверяю…' : 'Удаляю…') + '</div>';
+        api('/api/backup/retention/apply?dryRun=' + (dry ? '1' : '0'), { method: 'POST', body: {} })
+          .then(function (r) {
+            var deleted = r.deleted || [];
+            var kept = r.kept || [];
+            var head = dry
+              ? 'Будет удалено: ' + deleted.length + ' (' + fmtSize(r.freedBytes) + ')'
+              : 'Удалено: ' + (r.deletedCount || 0) + ' (' + fmtSize(r.freedBytes) + ')';
+            var rows = deleted.map(function (d) {
+              return '<li><code>' + esc(d.name) + '</code> — ' + fmtSize(d.sizeBytes) + '</li>';
+            }).join('');
+            res.innerHTML = '<div class="cfg-note ' + (deleted.length ? 'ok' : '') + '">' +
+              '<strong>' + esc(head) + '</strong>' +
+              (rows ? '<ul class="cfg-list">' + rows + '</ul>' : '') +
+              (r.skippedByLimit ? '<div class="cfg-sub">Отложено по лимиту: ' + r.skippedByLimit + '</div>' : '') +
+              '</div>';
+            if (!dry) {
+              toast('Уборка выполнена', 'ok');
+              loadRetentionBox();
+            }
+          })
+          .catch(function (err) {
+            res.innerHTML = '<div class="cfg-note error">' + esc(err.message) + '</div>';
+          });
+      }
+    }).catch(function (err) {
+      box.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
     });
   }
 

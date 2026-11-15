@@ -56,7 +56,14 @@
     "autoPrune": true
   },
   "backup": {
-    "destination": ""
+    "destination": "",
+    "retention": {
+      "keepCount": 7,
+      "keepDays": 14,
+      "gfs": { "daily": 7, "weekly": 8, "monthly": 12 },
+      "protectLast": true,
+      "maxDeletePerRun": 10
+    }
   },
   "updates": {
     "enabled": false,

@@ -105,6 +105,7 @@ netsh http add urlacl url=http://+:8080/ user="NT AUTHORITY\SYSTEM"
 | `updates.path` | — | каталог или сетевая папка с `latest.json` |
 | `updates.checkOnStart` | `true` | проверять при старте |
 | `backup.destination` | — | куда складывать бэкапы по умолчанию (пусто — `dataDir\backups\store`) |
+| `backup.retention.*` | — | политика хранения копий: `keepCount`, `keepDays`, `gfs.daily/weekly/monthly`, `protectLast`, `maxDeletePerRun` |
 
 Подробности — в [ARCHITECTURE.md](ARCHITECTURE.md#хранение-истории-и-обновления).
 
