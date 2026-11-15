@@ -2518,6 +2518,22 @@
         '</div><div class="card-body" id="brand-box">' +
         '<div class="muted">Загрузка…</div></div></div>';
 
+      html += '<div class="card"><div class="card-head"><i class="fas fa-file-zipper"></i> Конфигурация' +
+        '<span class="spacer"></span>' +
+        '<span class="muted" style="font-size:11px">перенос между машинами</span>' +
+        '</div><div class="card-body">' +
+        '<p class="muted" style="margin:0 0 12px">Один архив: настройки, брендинг, пути и компании. ' +
+        'Перед импортом текущая конфигурация автоматически сохраняется в резервную копию.</p>' +
+        '<div class="cfg-actions">' +
+        '<button class="btn btn-sm" id="cfg-export"><i class="fas fa-download"></i> Скачать архив</button>' +
+        '<label class="chk" style="margin:0"><input type="checkbox" id="cfg-secrets"> с секретами</label>' +
+        '<span class="spacer"></span>' +
+        '<button class="btn btn-sm" id="cfg-import-pick"><i class="fas fa-upload"></i> Импорт…</button>' +
+        '<input type="file" id="cfg-import-file" accept=".zip,application/zip" class="hidden">' +
+        '</div>' +
+        '<div id="cfg-result"></div>' +
+        '</div></div>';
+
       html += '<div class="card"><div class="card-head"><i class="fas fa-key"></i> Смена пароля</div><div class="card-body">' +
         '<form id="pwd-form" style="max-width:420px">' +
         '<label style="display:block;margin-bottom:4px;font-weight:600;color:var(--ink-soft)">Новый пароль (минимум 8 символов)</label>' +
@@ -2541,6 +2557,7 @@
 
       loadAgents();
       loadBrandingBox();
+      wireConfigBundle();
 
       document.getElementById('pwd-form').addEventListener('submit', function (e) {
         e.preventDefault();
@@ -2555,6 +2572,131 @@
 
     }).catch(function (err) {
       view.innerHTML = '<div class="card"><div class="card-body">Ошибка: ' + esc(err.message) + '</div></div>';
+    });
+  }
+
+  // ------------------------------------------------------------------ конфигурация: экспорт/импорт
+
+  function wireConfigBundle() {
+    var expBtn = document.getElementById('cfg-export');
+    var pickBtn = document.getElementById('cfg-import-pick');
+    var fileInput = document.getElementById('cfg-import-file');
+    var secretsBox = document.getElementById('cfg-secrets');
+    var result = document.getElementById('cfg-result');
+    if (!expBtn || !pickBtn || !fileInput) return;
+
+    expBtn.addEventListener('click', function () {
+      var withSecrets = secretsBox && secretsBox.checked;
+      if (withSecrets && !confirm(
+        'В архив попадут секреты из secrets.json — пароли источников и учётные данные.\n\n' +
+        'Храните такой файл так же осторожно, как сам secrets.json.\n\nПродолжить?')) {
+        return;
+      }
+      window.location.href = '/api/config/export' + (withSecrets ? '?secrets=1' : '');
+      toast('Архив готовится…', 'ok');
+    });
+
+    pickBtn.addEventListener('click', function () { fileInput.click(); });
+
+    fileInput.addEventListener('change', function () {
+      var file = this.files && this.files[0];
+      this.value = '';
+      if (!file) return;
+
+      result.innerHTML = '<div class="cfg-note">Читаю архив…</div>';
+
+      // Сначала — проверка без изменений: показываем, что будет затронуто.
+      uploadConfig(file, true).then(function (preview) {
+        showImportPreview(preview, file);
+      }).catch(function (err) {
+        result.innerHTML = '<div class="cfg-note error">' + esc(err.message) + '</div>';
+      });
+    });
+
+    function showImportPreview(p, file) {
+      var changes = p.changes || [];
+      var willChange = changes.filter(function (c) { return c.action !== 'без изменений'; });
+      var rows = changes.map(function (c) {
+        var cls = c.action === 'без изменений' ? 'same' : (c.action === 'новый' ? 'new' : 'mod');
+        return '<tr><td><code>' + esc(c.file) + '</code></td>' +
+          '<td><span class="cfg-tag ' + cls + '">' + esc(c.action) + '</span></td>' +
+          '<td class="muted">' + esc(c.note || '') + '</td></tr>';
+      }).join('');
+
+      var html = '<div class="cfg-preview">' +
+        '<div class="cfg-preview-head">' +
+        '<i class="fas fa-file-archive"></i> <strong>' + esc(file.name) + '</strong>' +
+        (p.manifestProduct ? ' <span class="muted">· ' + esc(p.manifestProduct) +
+          (p.manifestVersion ? ' ' + esc(p.manifestVersion) : '') + '</span>' : '') +
+        (p.manifestCreatedAt ? ' <span class="muted">· ' + esc(fmtDateTime(p.manifestCreatedAt)) + '</span>' : '') +
+        '</div>';
+
+      if (!changes.length) {
+        html += '<div class="cfg-note error">В архиве нет файлов конфигурации.</div></div>';
+        result.innerHTML = html;
+        return;
+      }
+
+      html += '<table class="cfg-table"><thead><tr><th>Файл</th><th>Действие</th><th>Примечание</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody></table>';
+
+      html += '<div class="cfg-actions" style="margin-top:12px">' +
+        '<button class="btn btn-sm btn-primary" id="cfg-apply"><i class="fas fa-check"></i> Применить</button>' +
+        '<button class="btn btn-sm" id="cfg-cancel">Отмена</button>' +
+        '<span class="spacer"></span>' +
+        '<span class="muted" style="font-size:11.5px">затронуто файлов: ' + willChange.length + '</span>' +
+        '</div></div>';
+
+      result.innerHTML = html;
+
+      document.getElementById('cfg-cancel').addEventListener('click', function () {
+        result.innerHTML = '<div class="cfg-note">Импорт отменён, ничего не изменено.</div>';
+      });
+
+      document.getElementById('cfg-apply').addEventListener('click', function () {
+        if (!confirm('Применить архив? Текущая конфигурация будет сохранена в резервную копию.')) return;
+        var btn = document.getElementById('cfg-apply');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Применяю…';
+        uploadConfig(file, false).then(function (res) {
+          var past = { 'новый': 'создан', 'будет заменён': 'заменён', 'без изменений': 'без изменений' };
+          var okRows = (res.changes || []).map(function (c) {
+            return '<li><code>' + esc(c.file) + '</code> — ' + esc(past[c.action] || c.action) + '</li>';
+          }).join('');
+          result.innerHTML = '<div class="cfg-note ok">' +
+            '<i class="fas fa-check-circle"></i> Применено файлов: ' + res.filesWritten +
+            ', компаний: ' + res.companiesImported +
+            (res.secretsImported ? ', секреты обновлены' : '') +
+            (res.backupPath ? '<div class="cfg-sub">Резервная копия: <code>' + esc(res.backupPath) + '</code></div>' : '') +
+            '<ul class="cfg-list">' + okRows + '</ul>' +
+            '<div class="cfg-sub">Обновите страницу, чтобы увидеть новую конфигурацию.</div>' +
+            '</div>';
+          toast('Конфигурация импортирована', 'ok');
+        }).catch(function (err) {
+          result.innerHTML = '<div class="cfg-note error">' + esc(err.message) + '</div>';
+        });
+      });
+    }
+  }
+
+  /** Загружает ZIP на сервер. dryRun=true — только проверка. */
+  function uploadConfig(file, dryRun) {
+    var url = '/api/config/import?dryRun=' + (dryRun ? '1' : '0');
+    var secretsBox = document.getElementById('cfg-secrets');
+    if (secretsBox && secretsBox.checked) url += '&secrets=1';
+
+    return fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/zip' },
+      body: file
+    }).then(function (r) {
+      return r.json().then(function (data) {
+        if (!r.ok || !data.ok) {
+          throw new Error(data.error || ('HTTP ' + r.status));
+        }
+        return data;
+      });
     });
   }
 

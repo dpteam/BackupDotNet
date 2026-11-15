@@ -169,14 +169,16 @@ if (-not (Test-Path $envPath) -or -not $envIsPortable) {
 
 # Пример компании — только если компаний ещё нет вообще.
 # Сеется выключенным: чтобы демо-пути не шумели в проде, включите в интерфейсе.
+# Правим текстом, а не через ConvertTo-Json: иначе файл получает уродливое
+# форматирование и его неприятно открывать руками.
 $companiesDir = Join-Path $bin 'config\companies'
 if (-not (Get-ChildItem $companiesDir -Filter '*.json' -ErrorAction SilentlyContinue)) {
     $sample = Join-Path $root 'config\companies\example.example.json'
     if (Test-Path $sample) {
-        $sampleJson = Get-Content $sample -Raw -Encoding UTF8 | ConvertFrom-Json
-        $sampleJson.enabled = $false
-        $sampleJson | ConvertTo-Json -Depth 20 |
-            Set-Content (Join-Path $companiesDir 'example.json') -Encoding UTF8
+        $text = Get-Content $sample -Raw -Encoding UTF8
+        $text = [regex]::Replace($text, '"enabled"\s*:\s*true', '"enabled": false', 'None', [TimeSpan]::FromSeconds(1))
+        $target = Join-Path $companiesDir 'example.json'
+        [System.IO.File]::WriteAllText($target, $text, (New-Object System.Text.UTF8Encoding($false)))
         Write-Host '  config\companies\example.json  создан (выключен)'
     }
 }

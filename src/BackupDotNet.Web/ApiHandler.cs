@@ -195,6 +195,16 @@ public class ApiHandler
 				HandleCompaniesExport(ctx, session);
 				return;
 			}
+			if (path == "/api/config/export" && method == "GET")
+			{
+				HandleConfigExport(ctx, session);
+				return;
+			}
+			if (path == "/api/config/import" && method == "POST")
+			{
+				HandleConfigImport(ctx, session);
+				return;
+			}
 			if (path.StartsWith("/api/company/"))
 			{
 				string rest = path.Substring("/api/company/".Length);
@@ -2910,8 +2920,121 @@ public class ApiHandler
 		ctx.Response.Close();
 	}
 
-	private void HandleDay(HttpListenerContext ctx, SessionInfo si)
+	/// <summary>
+	/// GET /api/config/export — вся конфигурация одним ZIP.
+	/// Параметры: <c>secrets=1</c> — включить секреты, <c>companies=id1,id2</c> — только выбранные.
+	/// </summary>
+	private void HandleConfigExport(HttpListenerContext ctx, SessionInfo si)
 	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		bool withSecrets = Query(ctx, "secrets") == "1";
+		string filter = Query(ctx, "companies").Trim();
+		List<string> ids = null;
+		if (filter.Length > 0)
+		{
+			ids = new List<string>();
+			foreach (string part in filter.Split(','))
+			{
+				string id = part.Trim();
+				if (id.Length > 0)
+				{
+					ids.Add(id);
+				}
+			}
+		}
+		byte[] zip;
+		try
+		{
+			zip = ConfigBundle.Export(_settings.ConfigDir, withSecrets, ids);
+		}
+		catch (Exception ex)
+		{
+			Log.Error("Экспорт конфигурации", ex);
+			WriteJson(ctx, Json.Obj("error", "не удалось собрать архив: " + ex.Message), 500);
+			return;
+		}
+		string fileName = "config-" + DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) +
+			(withSecrets ? "-with-secrets" : "") + ".zip";
+		ctx.Response.ContentType = "application/zip";
+		ctx.Response.AddHeader("Content-Disposition", "attachment; filename=\"" + fileName + "\"");
+		ctx.Response.ContentLength64 = zip.Length;
+		ctx.Response.OutputStream.Write(zip, 0, zip.Length);
+		ctx.Response.Close();
+		_audit.Write(si.User, "config.export", "config",
+			"архив " + (zip.Length / 1024) + " КБ" + (withSecrets ? ", с секретами" : "") + ", IP " + ClientIp(ctx));
+		Log.Info("Экспорт конфигурации: " + fileName + " (" + zip.Length + " байт, секреты: " + withSecrets + ")");
+	}
+
+	/// <summary>
+	/// POST /api/config/import — применить архив конфигурации.
+	/// Тело — сам ZIP. Параметры: <c>dryRun=1</c>, <c>secrets=1</c>.
+	/// Перед записью текущая конфигурация сохраняется в <c>&lt;dataDir&gt;\backups</c>.
+	/// </summary>
+	private void HandleConfigImport(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		byte[] body;
+		try
+		{
+			using MemoryStream ms = new MemoryStream();
+			ctx.Request.InputStream.CopyTo(ms);
+			body = ms.ToArray();
+		}
+		catch (Exception ex)
+		{
+			WriteJson(ctx, Json.Obj("error", "не удалось прочитать тело запроса: " + ex.Message), 400);
+			return;
+		}
+		if (body.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "пустой запрос: ожидается ZIP с конфигурацией"), 400);
+			return;
+		}
+		bool dryRun = Query(ctx, "dryRun") == "1";
+		bool allowSecrets = Query(ctx, "secrets") == "1";
+		string backupDir = Path.Combine(_settings.DataDir, "backups");
+
+		ConfigBundle.ImportResult res = ConfigBundle.Import(_settings.ConfigDir, body, dryRun, allowSecrets, backupDir);
+		if (!res.Ok)
+		{
+			Log.Warn("Импорт конфигурации отклонён: " + res.Error);
+			WriteJson(ctx, res.ToJson(), 400);
+			return;
+		}
+		if (dryRun)
+		{
+			Log.Info("Импорт конфигурации: проверка без изменений, файлов " + res.Changes.Count);
+		}
+		else
+		{
+			Log.Info("Импорт конфигурации: записано файлов " + res.FilesWritten +
+				", компаний " + res.CompaniesImported +
+				", резервная копия: " + (res.BackupPath.Length > 0 ? res.BackupPath : "нет"));
+			_audit.Write(si.User, "config.import", "config",
+				"файлов: " + res.FilesWritten + ", компаний: " + res.CompaniesImported +
+				(res.SecretsImported ? ", с секретами" : "") + ", IP " + ClientIp(ctx));
+			// Перечитываем конфигурацию, чтобы изменения применились без перезапуска.
+			try
+			{
+				_config.Load();
+			}
+			catch (Exception ex)
+			{
+				Log.Warn("После импорта конфигурация перечитана с ошибкой: " + ex.Message);
+			}
+		}
+		WriteJson(ctx, res.ToJson(), 200);
+	}
+
+	private void HandleDay(HttpListenerContext ctx, SessionInfo si)	{
 		string company = QueryParam(ctx, "company");
 		string dateText = QueryParam(ctx, "date");
 		if (company.Length == 0)
