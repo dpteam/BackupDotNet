@@ -459,6 +459,11 @@ public class ApiHandler
 				HandleBrandingSave(ctx, session);
 				return;
 			}
+			if (path == "/api/export/csv" && method == "GET")
+			{
+				HandleExportCsv(ctx, session);
+				return;
+			}
 			if (path == "/api/export")
 			{
 				HandleExport(ctx, session);
@@ -1613,6 +1618,191 @@ public class ApiHandler
 		res["snapshotDays"] = snapshotDays;
 		res["stoppedDays"] = stoppedDays;
 		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// GET /api/export/csv?what=backups|audit|inventory|companies|history
+	/// Универсальная выгрузка любой таблицы интерфейса.
+	///
+	/// Разделитель — точка с запятой, кодировка — UTF-8 с BOM: только в таком виде
+	/// Excel с русской локалью открывает файл без «кракозябр» и сам разносит
+	/// колонки. Это не «правильный CSV» по RFC, но именно то, что нужно человеку
+	/// с двойным кликом.
+	/// </summary>
+	private void HandleExportCsv(HttpListenerContext ctx, SessionInfo si)
+	{
+		string what = Query(ctx, "what").Trim().ToLowerInvariant();
+		if (what.Length == 0)
+		{
+			what = "backups";
+		}
+
+		StringBuilder sb = new StringBuilder();
+		string fileName;
+
+		switch (what)
+		{
+		case "backups":
+			fileName = "backups";
+			sb.AppendLine("Задание;Объект;Движок;Состояние;Прогресс;Размер;Начато;Завершено;Кто;Ошибка");
+			if (_backups != null)
+			{
+				foreach (BackupJob j in _backups.List())
+				{
+					sb.Append(EscapeCsv(j.Id)).Append(';')
+						.Append(EscapeCsv(j.Target)).Append(';')
+						.Append(EscapeCsv(j.Engine)).Append(';')
+						.Append(EscapeCsv(StatusRu(j.Status))).Append(';')
+						.Append(j.Progress).Append(';')
+						.Append(j.SizeBytes).Append(';')
+						.Append(EscapeCsv(FmtTime(j.CreatedAt))).Append(';')
+						.Append(EscapeCsv(j.FinishedAt.HasValue ? FmtTime(j.FinishedAt.Value) : "")).Append(';')
+						.Append(EscapeCsv(j.RequestedBy)).Append(';')
+						.Append(EscapeCsv(j.Error)).AppendLine();
+				}
+			}
+			break;
+
+		case "copies":
+			fileName = "backup-copies";
+			sb.AppendLine("Копия;Объект;Когда;Размер, байт");
+			foreach (BackupCopy c in BackupRetention.Scan(DefaultBackupDestination()))
+			{
+				sb.Append(EscapeCsv(Path.GetFileName(c.Path))).Append(';')
+					.Append(EscapeCsv(c.Name)).Append(';')
+					.Append(EscapeCsv(FmtTime(c.Timestamp))).Append(';')
+					.Append(c.SizeBytes).AppendLine();
+			}
+			break;
+
+		case "audit":
+			if (!Roles.CanManageUsers(si.Role))
+			{
+				WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+				return;
+			}
+			fileName = "audit";
+			sb.AppendLine("Время;Пользователь;Действие;Объект;Подробности");
+			foreach (object o in _audit.Read(2000, Query(ctx, "action").Trim(), Query(ctx, "user").Trim()))
+			{
+				Dictionary<string, object> row = Json.AsObject(o);
+				sb.Append(EscapeCsv(FmtTime(BackupRun.ParseDate(Json.Get(row, "ts"))))).Append(';')
+					.Append(EscapeCsv(Json.GetStr(row, "user", ""))).Append(';')
+					.Append(EscapeCsv(Json.GetStr(row, "action", ""))).Append(';')
+					.Append(EscapeCsv(Json.GetStr(row, "target", ""))).Append(';')
+					.Append(EscapeCsv(Json.GetStr(row, "detail", ""))).AppendLine();
+			}
+			break;
+
+		case "inventory":
+			fileName = "inventory";
+			sb.AppendLine("ВМ;Состояние;Поколение;vCPU;Память, МБ;Дисков;Размер дисков, байт;Снимков;IP;Аптайм, ч;Heartbeat");
+			string vmError;
+			foreach (Dictionary<string, object> vm in VmInventory.Vms(out vmError, force: false))
+			{
+				sb.Append(EscapeCsv(Json.GetStr(vm, "name", ""))).Append(';')
+					.Append(EscapeCsv(Json.GetStr(vm, "state", ""))).Append(';')
+					.Append(Json.Int(Json.Get(vm, "generation"), 0)).Append(';')
+					.Append(Json.Long(Json.Get(vm, "cpu"), 0L)).Append(';')
+					.Append(Json.Long(Json.Get(vm, "memoryMb"), 0L)).Append(';')
+					.Append(Json.AsArray(Json.Get(vm, "disks")).Count).Append(';')
+					.Append(Json.Long(Json.Get(vm, "diskBytes"), 0L)).Append(';')
+					.Append(Json.Int(Json.Get(vm, "checkpoints"), 0)).Append(';')
+					.Append(EscapeCsv(Json.GetStr(vm, "ip", ""))).Append(';')
+					.Append(Math.Round(Json.Dbl(Json.Get(vm, "uptimeHours"), -1.0), 1)).Append(';')
+					.Append(EscapeCsv(Json.GetStr(vm, "heartbeat", ""))).AppendLine();
+			}
+			break;
+
+		case "companies":
+			fileName = "companies";
+			sb.AppendLine("ID;Название;Короткое;Включена;Источников;Свежесть, ч;Мин. размер, МБ;Удалённый агент;Теги");
+			foreach (Company c in _config.Companies)
+			{
+				if (!si.CanSeeCompany(c.Id))
+				{
+					continue;
+				}
+				sb.Append(EscapeCsv(c.Id)).Append(';')
+					.Append(EscapeCsv(c.Name)).Append(';')
+					.Append(EscapeCsv(c.ShortName)).Append(';')
+					.Append(c.Enabled ? "да" : "нет").Append(';')
+					.Append(c.Sources.Count).Append(';')
+					.Append(c.Policy.FreshnessHours).Append(';')
+					.Append(c.Policy.MinSizeBytes / 1048576L).Append(';')
+					.Append(EscapeCsv(c.RemoteAgent)).Append(';')
+					.Append(EscapeCsv(string.Join(", ", c.Tags.ToArray()))).AppendLine();
+			}
+			break;
+
+		case "history":
+			fileName = "history";
+			sb.AppendLine("Компания;Задание;Тип;Состояние;Размер, байт;Длительность, с;Время;Сообщение");
+			foreach (JobState s in _store.GetStates())
+			{
+				if (!si.CanSeeCompany(s.CompanyId))
+				{
+					continue;
+				}
+				sb.Append(EscapeCsv(s.CompanyName)).Append(';')
+					.Append(EscapeCsv(s.Job)).Append(';')
+					.Append(EscapeCsv(s.Kind)).Append(';')
+					.Append(EscapeCsv(StatusNames.Of(s.Status))).Append(';')
+					.Append(s.SizeBytes).Append(';')
+					.Append(s.DurationSeconds).Append(';')
+					.Append(EscapeCsv(FmtTime(s.Updated))).Append(';')
+					.Append(EscapeCsv(s.Message)).AppendLine();
+			}
+			break;
+
+		default:
+			WriteJson(ctx, Json.Obj("error", "неизвестный набор: " + what +
+				". Допустимо: backups, copies, audit, inventory, companies, history"), 400);
+			return;
+		}
+
+		// GetBytes не пишет preamble — BOM добавляем вручную. Без него Excel
+		// с русской локалью открывает файл «кракозябрами».
+		UTF8Encoding enc = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+		byte[] preamble = enc.GetPreamble();
+		byte[] content = enc.GetBytes(sb.ToString());
+		byte[] bytes = new byte[preamble.Length + content.Length];
+		Buffer.BlockCopy(preamble, 0, bytes, 0, preamble.Length);
+		Buffer.BlockCopy(content, 0, bytes, preamble.Length, content.Length);
+		string stamp = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+		ctx.Response.ContentType = "text/csv; charset=utf-8";
+		ctx.Response.AddHeader("Content-Disposition",
+			"attachment; filename=\"" + fileName + "-" + stamp + ".csv\"");
+		ctx.Response.ContentLength64 = bytes.Length;
+		ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+		ctx.Response.Close();
+		Log.Info("Экспорт CSV: " + fileName + " (" + bytes.Length + " байт)");
+	}
+
+	/// <summary>Состояние задания по-русски — для CSV и интерфейса.</summary>
+	private static string StatusRu(string status)
+	{
+		switch ((status ?? "").ToLowerInvariant())
+		{
+		case "pending":
+			return "в очереди";
+		case "running":
+			return "выполняется";
+		case "done":
+			return "готово";
+		case "failed":
+			return "ошибка";
+		case "cancelled":
+			return "отменено";
+		default:
+			return status ?? "";
+		}
+	}
+
+	/// <summary>Дата и время для CSV: без «T» и «Z», как ждёт Excel.</summary>
+	private static string FmtTime(DateTime dt)
+	{
+		return dt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 	}
 
 	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)	{

@@ -3213,6 +3213,10 @@
     stopBackupsPolling();
     backupsState.built = false;
 
+    // Адресуемость: #/backups/<id> открывает карточку задания.
+    backupsState.deepLinkId = state.companyId || '';
+    backupsState.deepLinkShown = false;
+
     api('/api/backup/engines').then(function (data) {
       var engines = (data.engines || []).filter(function (e) { return e.available; });
       var all = data.engines || [];
@@ -3269,13 +3273,17 @@
 
       // --- задания
       html += '<div class="card"><div class="card-head"><i class="fas fa-list-check"></i> Задания' +
-        '<span class="spacer"></span><span class="muted" style="font-size:11px" id="bk-count"></span>' +
+        '<span class="spacer"></span>' +
+        '<button class="btn btn-sm" id="bk-export"><i class="fas fa-file-csv"></i> CSV</button>' +
+        '<span class="muted" style="font-size:11px" id="bk-count"></span>' +
         '</div><div class="card-body" style="padding:0"><div id="bk-jobs">' +
         '<div style="padding:16px" class="muted">Загрузка…</div></div></div></div>';
 
       // --- хранение копий
       html += '<div class="card"><div class="card-head"><i class="fas fa-clock-rotate-left"></i> Хранение копий' +
-        '<span class="spacer"></span><span class="muted" style="font-size:11px" id="ret-summary"></span>' +
+        '<span class="spacer"></span>' +
+        '<button class="btn btn-sm" id="ret-export"><i class="fas fa-file-csv"></i> CSV</button>' +
+        '<span class="muted" style="font-size:11px" id="ret-summary"></span>' +
         '</div><div class="card-body" id="ret-box"><div class="muted">Загрузка…</div></div></div>';
 
       // --- расписания
@@ -3291,6 +3299,19 @@
       loadBackupTargets();
       loadRetentionBox();
       loadSchedulesBox();
+
+      var bkExp = document.getElementById('bk-export');
+      if (bkExp) {
+        bkExp.addEventListener('click', function () {
+          window.location.href = '/api/export/csv?what=backups';
+        });
+      }
+      var retExp = document.getElementById('ret-export');
+      if (retExp) {
+        retExp.addEventListener('click', function () {
+          window.location.href = '/api/export/csv?what=copies';
+        });
+      }
 
       document.getElementById('bk-refresh-targets').addEventListener('click', loadBackupTargets);
 
@@ -3397,12 +3418,30 @@
           '<td>' + (j.sizeBytes ? fmtSize(j.sizeBytes) : '—') + '</td>' +
           '<td class="muted" style="font-size:11.5px">' + esc(fmtDateTime(j.createdAt)) + '</td>' +
           '<td>' + (active ? '<button class="btn btn-sm" data-cancel="' + esc(j.id) + '" title="Отменить">' +
-            '<i class="fas fa-stop"></i></button>' : '') + '</td>' +
+            '<i class="fas fa-stop"></i></button> ' : '') +
+            '<button class="btn btn-sm" data-open="' + esc(j.id) + '" title="Подробности">' +
+            '<i class="fas fa-circle-info"></i></button>' + '</td>' +
           '</tr>';
       });
 
       html += '</tbody></table>';
       box.innerHTML = html;
+
+      $$('[data-open]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-open');
+          location.hash = '#/backups/' + encodeURIComponent(id);
+          showJobCard(id);
+        });
+      });
+
+      // Прямая ссылка: #/backups/<id> открывает карточку задания.
+      // Показываем один раз: список обновляется каждые 2 секунды, и без флага
+      // модальное окно возвращалось бы после каждого закрытия.
+      if (backupsState.deepLinkId && !backupsState.deepLinkShown) {
+        backupsState.deepLinkShown = true;
+        showJobCard(backupsState.deepLinkId);
+      }
 
       $$('[data-cancel]').forEach(function (btn) {
         btn.addEventListener('click', function () {
@@ -3554,6 +3593,74 @@
       }
     }).catch(function (err) {
       box.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
+    });
+  }
+
+  /** Карточка задания с подробностями — открывается по ссылке #/backups/<id>. */
+  function showJobCard(jobId) {
+    api('/api/backup/jobs').then(function (data) {
+      var jobs = data.jobs || [];
+      var job = null;
+      for (var i = 0; i < jobs.length; i++) {
+        if (jobs[i].id === jobId) { job = jobs[i]; break; }
+      }
+      if (!job) {
+        toast('Задание не найдено: ' + jobId, 'error');
+        return;
+      }
+
+      var icon = job.status === 'done' ? 'fa-check-circle'
+        : (job.status === 'failed' ? 'fa-times-circle'
+        : (job.status === 'running' ? 'fa-spinner fa-spin' : 'fa-clock'));
+      var color = job.status === 'done' ? 'var(--ok)'
+        : (job.status === 'failed' ? 'var(--fail)' : 'var(--muted)');
+
+      var rows = [
+        ['Задание', '<code>' + esc(job.id) + '</code>'],
+        ['Объект', esc(job.target)],
+        ['Движок', '<code>' + esc(job.engine) + '</code>'],
+        ['Состояние', backupStatusBadge(job.status)],
+        ['Прогресс', job.progress + '%'],
+        ['Размер', job.sizeBytes ? fmtSize(job.sizeBytes) : '—'],
+        ['Создано', esc(fmtDateTime(job.createdAt))],
+        ['Начато', job.startedAt ? esc(fmtDateTime(job.startedAt)) : '—'],
+        ['Завершено', job.finishedAt ? esc(fmtDateTime(job.finishedAt)) : '—'],
+        ['Длительность', job.durationMs ? (job.durationMs / 1000).toFixed(1) + ' с' : '—'],
+        ['Кто запустил', esc(job.requestedBy || '—')],
+        ['Каталог', '<code>' + esc(job.destination) + '</code>']
+      ];
+
+      var html = '<div class="modal-backdrop" id="job-card"><div class="modal" style="max-width:620px">' +
+        '<h3><i class="fas ' + icon + '" style="color:' + color + '"></i> ' + esc(job.target) + '</h3>' +
+        '<div class="kv">' +
+        rows.map(function (r) { return '<div class="k">' + r[0] + '</div><div>' + r[1] + '</div>'; }).join('') +
+        '</div>';
+
+      if (job.error) {
+        html += '<div class="cfg-note error" style="margin-top:10px">' + esc(job.error) + '</div>';
+      } else if (job.message) {
+        html += '<div class="cfg-note" style="margin-top:10px">' + esc(job.message) + '</div>';
+      }
+
+      html += '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' +
+        'Ссылка на это задание: <code>' + esc(location.origin + '/#/backups/' + job.id) + '</code></p>' +
+        '<div class="form-actions"><button class="btn" id="job-close">Закрыть</button></div>' +
+        '</div></div>';
+
+      var host = document.createElement('div');
+      host.innerHTML = html;
+      document.body.appendChild(host.firstChild);
+
+      document.getElementById('job-close').addEventListener('click', function () {
+        var m = document.getElementById('job-card');
+        if (m && m.parentNode) m.parentNode.removeChild(m);
+        // Возвращаем адрес к списку, чтобы ссылка не «залипала».
+        if (location.hash.indexOf('/backups/') >= 0) {
+          location.hash = '#/backups';
+        }
+      });
+    }).catch(function (err) {
+      toast('Ошибка: ' + err.message, 'error');
     });
   }
 
@@ -3832,6 +3939,7 @@
 
     var html = '<h2 class="page-title"><i class="fas fa-server"></i> Инвентарь' +
       '<span class="spacer"></span>' +
+      '<button class="btn btn-sm" id="inv-export"><i class="fas fa-file-csv"></i> CSV</button>' +
       '<button class="btn btn-sm" id="inv-refresh"><i class="fas fa-sync-alt"></i> Обновить</button>' +
       '</h2>';
 
@@ -3909,6 +4017,10 @@
     view.innerHTML = html;
 
     loadHygiene();
+
+    document.getElementById('inv-export').addEventListener('click', function () {
+      window.location.href = '/api/export/csv?what=inventory';
+    });
 
     document.getElementById('inv-refresh').addEventListener('click', function () {
       var btn = this;
@@ -4141,10 +4253,20 @@
           'Журнал хранится по месяцам, показываются последние три.</p>' +
           '</div></div>';
 
-        html += '<div class="card"><div class="card-head"><i class="fas fa-list"></i> Записи</div>' +
+        html += '<div class="card"><div class="card-head"><i class="fas fa-list"></i> Записи' +
+          '<span class="spacer"></span>' +
+          '<button class="btn btn-sm" id="au-export"><i class="fas fa-file-csv"></i> CSV</button>' +
+          '</div>' +
           '<div class="card-body" style="padding:0"><div id="au-list"></div></div></div>';
 
         view.innerHTML = html;
+
+        document.getElementById('au-export').addEventListener('click', function () {
+          var url = '/api/export/csv?what=audit&limit=2000';
+          if (auditState.action) url += '&action=' + encodeURIComponent(auditState.action);
+          if (auditState.user) url += '&user=' + encodeURIComponent(auditState.user);
+          window.location.href = url;
+        });
 
         document.getElementById('au-apply').addEventListener('click', function () {
           auditState.action = document.getElementById('au-action').value.trim();
