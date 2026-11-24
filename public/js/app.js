@@ -264,6 +264,7 @@
     if (state.route === 'health') return renderHealth();
     if (state.route === 'backups') return renderBackups();
     if (state.route === 'inventory') return renderInventory();
+    if (state.route === 'network') return renderNetwork();
     if (state.route === 'audit') return renderAudit();
     if (state.route === 'settings') return renderSettings();
     if (state.route === 'company') {
@@ -3704,7 +3705,7 @@
           '<td>' + (active ? '<button class="btn btn-sm" data-cancel="' + esc(j.id) + '" title="Отменить">' +
             '<i class="fas fa-stop"></i></button> ' : '') +
             '<button class="btn btn-sm" data-open="' + esc(j.id) + '" title="Подробности">' +
-            '<i class="fas fa-circle-info"></i></button>' + '</td>' +
+            '<i class="fas fa-info-circle"></i></button>' + '</td>' +
           '</tr>';
       });
 
@@ -5153,9 +5154,245 @@
     });
   }
 
+  // ------------------------------------------------------------------ сеть
+
+  var netState = { data: null, filter: '' };
+
+  function renderNetwork() {
+    view.innerHTML = '<div class="muted">Загрузка сети…</div>';
+
+    api('/api/network').then(function (data) {
+      netState.data = data;
+      drawNetwork();
+    }).catch(function (err) {
+      view.innerHTML = '<div class="card"><div class="card-body">Ошибка: ' + esc(err.message) + '</div></div>';
+    });
+  }
+
+  function drawNetwork() {
+    var d = netState.data;
+    if (!d) return;
+
+    var switches = d.switches || [];
+    var adapters = d.vmAdapters || [];
+    var hostAdapters = d.hostAdapters || [];
+
+    var html = '<h2 class="page-title"><i class="fas fa-network-wired"></i> Сеть' +
+      '<span class="spacer"></span>' +
+      '<button class="btn btn-sm" id="net-refresh"><i class="fas fa-sync-alt"></i> Обновить</button>' +
+      '</h2>';
+
+    if (d.error) {
+      html += '<div class="card" style="border-color:var(--warn)"><div class="card-body">' +
+        '<i class="fas fa-exclamation-triangle" style="color:var(--warn)"></i> ' +
+        esc(d.error) + '</div></div>';
+    }
+
+    html += '<div class="card" style="border-left:4px solid var(--brand)"><div class="card-body" ' +
+      'style="font-size:11.5px" class="muted">' +
+      '<i class="fas fa-info-circle" style="color:var(--brand)"></i> ' +
+      'Здесь можно менять только VLAN на адаптерах ВМ. Создание коммутаторов и привязка к ' +
+      'физическому адаптеру намеренно не автоматизированы: ошибка в привязке рвёт сеть хоста ' +
+      'вместе с доступом к агенту. Это делается из консоли Hyper-V.' +
+      '</div></div>';
+
+    // --- коммутаторы
+    html += '<div class="card"><div class="card-head"><i class="fas fa-project-diagram"></i> ' +
+      'Виртуальные коммутаторы<span class="spacer"></span>' +
+      '<span class="muted" style="font-size:11px">' + switches.length + '</span></div>' +
+      '<div class="card-body" style="padding:0">';
+
+    if (!switches.length) {
+      html += '<div style="padding:16px" class="muted">Коммутаторов нет.</div>';
+    } else {
+      html += '<table class="journal-table"><thead><tr>' +
+        '<th>Коммутатор</th><th>Тип</th><th>Адаптер хоста</th><th>Адаптеров ВМ</th><th>Состояние</th>' +
+        '</tr></thead><tbody>';
+      switches.forEach(function (s) {
+        var kindBadge = s.kind === 'External'
+          ? '<span class="badge s-OK">External</span>'
+          : (s.kind === 'Internal' ? '<span class="badge s-WARN">Internal</span>'
+            : '<span class="badge s-NODATA">Private</span>');
+        html += '<tr>' +
+          '<td><strong>' + esc(s.name) + '</strong></td>' +
+          '<td>' + kindBadge + '</td>' +
+          '<td class="muted" style="font-size:11.5px">' + esc(s.adapter || '—') + '</td>' +
+          '<td>' + (s.vmCount || 0) + '</td>' +
+          '<td class="muted" style="font-size:11.5px">' + esc(s.state || '—') + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div></div>';
+
+    // --- адаптеры ВМ
+    html += '<div class="card"><div class="card-head"><i class="fas fa-plug"></i> Адаптеры ВМ' +
+      '<span class="spacer"></span>' +
+      '<span class="muted" style="font-size:11px">' + adapters.length + '</span></div>' +
+      '<div class="card-body" style="padding:0">';
+
+    if (!adapters.length) {
+      html += '<div style="padding:16px" class="muted">Сетевых адаптеров у ВМ нет.</div>';
+    } else {
+      html += '<table class="journal-table"><thead><tr>' +
+        '<th>ВМ</th><th>Адаптер</th><th>Коммутатор</th><th>MAC</th><th>VLAN</th>' +
+        (canWrite() ? '<th style="width:1%"></th>' : '') +
+        '</tr></thead><tbody>';
+      adapters.forEach(function (a) {
+        var vlanText;
+        if (a.mode === 'Access') {
+          vlanText = a.vlanId > 0
+            ? '<span class="badge s-OK">' + a.vlanId + '</span>'
+            : '<span class="muted">без тега</span>';
+        } else if (a.mode === 'Trunk') {
+          vlanText = '<span class="tag">trunk</span> <span class="muted" style="font-size:10.5px">' +
+            ((a.trunkVlans || []).slice(0, 6).join(', ') || '—') + '</span>';
+        } else if (a.mode === 'Private' || a.mode === 'PVLAN') {
+          vlanText = '<span class="tag">' + esc(a.mode) + '</span>';
+        } else {
+          vlanText = '<span class="muted">не задан</span>';
+        }
+
+        html += '<tr>' +
+          '<td><strong>' + esc(a.vmName || '—') + '</strong></td>' +
+          '<td class="muted" style="font-size:11.5px">' + esc(a.adapterName || '—') + '</td>' +
+          '<td>' + (a.switchName ? esc(a.switchName) : '<span class="muted">не подключён</span>') + '</td>' +
+          '<td class="muted" style="font-size:11px"><code>' + esc(a.mac || '—') + '</code></td>' +
+          '<td>' + vlanText + '</td>' +
+          (canWrite()
+            ? '<td style="white-space:nowrap"><button class="btn btn-sm" data-vlan-vm="' + esc(a.vmName) + '" ' +
+              'data-vlan-adapter="' + esc(a.adapterName) + '" data-vlan-now="' + (a.vlanId >= 0 ? a.vlanId : 0) + '" ' +
+              'title="Сменить VLAN"><i class="fas fa-tag"></i></button></td>'
+            : '') +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div></div>';
+
+    // --- сеть хоста
+    html += '<div class="card"><div class="card-head"><i class="fas fa-ethernet"></i> Сеть хоста' +
+      '<span class="spacer"></span>' +
+      '<span class="muted" style="font-size:11px">' + hostAdapters.length + '</span></div>' +
+      '<div class="card-body" style="padding:0">';
+
+    if (!hostAdapters.length) {
+      html += '<div style="padding:16px" class="muted">Адаптеров не найдено.</div>';
+    } else {
+      html += '<table class="journal-table"><thead><tr>' +
+        '<th>Адаптер</th><th>IP</th><th>Шлюз</th><th>Скорость</th><th>Статус</th>' +
+        '</tr></thead><tbody>';
+      hostAdapters.forEach(function (a) {
+        html += '<tr>' +
+          '<td style="font-size:11.5px">' + esc(a.name) + '</td>' +
+          '<td style="font-size:11.5px">' + ((a.ip || []).length
+            ? (a.ip || []).map(function (x) { return '<code>' + esc(x) + '</code>'; }).join('<br>')
+            : '<span class="muted">—</span>') + '</td>' +
+          '<td class="muted" style="font-size:11.5px">' + ((a.gateway || []).join(', ') || '—') + '</td>' +
+          '<td class="muted" style="font-size:11.5px;white-space:nowrap">' +
+            (a.speedMbps > 0 ? a.speedMbps + ' Мбит/с' : '—') + '</td>' +
+          '<td class="muted" style="font-size:11.5px">' + esc(a.status || '—') + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div></div>';
+
+    view.innerHTML = html;
+
+    document.getElementById('net-refresh').addEventListener('click', function () {
+      var btn = this;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      renderNetwork();
+    });
+
+    view.querySelectorAll('[data-vlan-vm]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        showVlanDialog(this.getAttribute('data-vlan-vm'), this.getAttribute('data-vlan-adapter'),
+          parseInt(this.getAttribute('data-vlan-now'), 10) || 0);
+      });
+    });
+  }
+
+  /** Диалог смены VLAN: значение, предупреждение о риске, подтверждение. */
+  function showVlanDialog(vmName, adapterName, currentVlan) {
+    var div = document.createElement('div');
+    div.innerHTML = '<div class="modal-backdrop" id="vlan-modal"><div class="modal">' +
+      '<h3><i class="fas fa-tag"></i> VLAN: ' + esc(vmName) + '</h3>' +
+      '<p class="muted" style="font-size:11.5px;margin-top:0">Адаптер: ' + esc(adapterName || '—') +
+      (currentVlan > 0 ? ' · сейчас VLAN ' + currentVlan : ' · сейчас без тега') + '</p>' +
+      '<label class="fld"><span>VLAN (0 — снять тег)</span>' +
+      '<input type="number" id="vlan-value" value="' + (currentVlan > 0 ? currentVlan : '') + '" min="0" max="4094"></label>' +
+      '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' +
+      '<i class="fas fa-exclamation-triangle" style="color:var(--warn)"></i> ' +
+      'Смена VLAN меняет сегмент сети машины. Если это её единственный адаптер и она работает — ' +
+      'связь может оборваться до настройки порта на коммутаторе.</p>' +
+      '<div id="vlan-status" class="json-status"></div>' +
+      '<div class="modal-actions" style="margin-top:14px">' +
+      '<button class="btn" id="vlan-cancel">Отмена</button>' +
+      '<button class="btn btn-primary" id="vlan-ok"><i class="fas fa-check"></i> Применить</button>' +
+      '</div></div></div>';
+    document.body.appendChild(div.firstChild);
+
+    document.getElementById('vlan-cancel').addEventListener('click', function () {
+      var m = document.getElementById('vlan-modal');
+      if (m) m.parentNode.removeChild(m);
+    });
+
+    document.getElementById('vlan-ok').addEventListener('click', function () {
+      var v = parseInt(document.getElementById('vlan-value').value, 10);
+      if (isNaN(v) || v < 0 || v > 4094) {
+        setVlanStatus('VLAN должен быть от 0 до 4094', 'bad');
+        return;
+      }
+      sendVlan(vmName, adapterName, v, false, this);
+    });
+  }
+
+  function setVlanStatus(text, kind) {
+    var el = document.getElementById('vlan-status');
+    if (!el) return;
+    el.className = 'json-status' + (kind ? ' ' + kind : '');
+    el.textContent = text || '';
+  }
+
+  function sendVlan(vmName, adapterName, vlan, confirmed, btn) {
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    }
+    setVlanStatus('применяю…', '');
+
+    api('/api/network/vlan', { method: 'POST', body: {
+      name: vmName, adapter: adapterName, vlan: vlan, confirmProtected: !!confirmed
+    } }).then(function (r) {
+      toast(r.message || 'VLAN изменён', r.ok ? 'ok' : 'error');
+      var m = document.getElementById('vlan-modal');
+      if (m) m.parentNode.removeChild(m);
+      renderNetwork();
+    }).catch(function (err) {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-check"></i> Применить';
+      }
+      // Риск обрыва связи: предлагаем подтвердить, а не запрещаем.
+      if (err.data && err.data.protected) {
+        var typed = window.prompt((err.message || '') + '\n\nВведите имя машины для подтверждения:', '');
+        if (typed === null) return;
+        if (String(typed).trim().toLowerCase() !== String(vmName).toLowerCase()) {
+          setVlanStatus('Имя не совпало — действие отменено', 'bad');
+          return;
+        }
+        sendVlan(vmName, adapterName, vlan, true, btn);
+        return;
+      }
+      setVlanStatus('Ошибка: ' + err.message, 'bad');
+    });
+  }
+
   /** Карантин: что лежит, сколько осталось, вернуть или удалить. */
-  function loadQuarantine() {
-    var box = document.getElementById('quar-box');
+  function loadQuarantine() {    var box = document.getElementById('quar-box');
     if (!box) return;
 
     api('/api/vm/quarantine').then(function (q) {

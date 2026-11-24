@@ -193,6 +193,9 @@ public class ApiHandler
 			case "/api/orphans":
 				HandleOrphanList(ctx, session);
 				return;
+			case "/api/network":
+				HandleNetwork(ctx, session);
+				return;
 			case "/api/users":
 				if (method == "GET")
 				{
@@ -568,6 +571,11 @@ public class ApiHandler
 			if (path == "/api/orphans/purge" && method == "POST")
 			{
 				HandleOrphanPurge(ctx, session);
+				return;
+			}
+			if (path == "/api/network/vlan" && method == "POST")
+			{
+				HandleSetVlan(ctx, session);
 				return;
 			}
 			if (path == "/api/support/preview" && method == "GET")
@@ -1775,6 +1783,111 @@ public class ApiHandler
 		res["staleDays"] = staleDays;
 
 		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// GET /api/network — коммутаторы, адаптеры ВМ с VLAN и сеть хоста.
+	/// Только чтение: создание коммутаторов намеренно не автоматизировано.
+	/// </summary>
+	private void HandleNetwork(HttpListenerContext ctx, SessionInfo si)
+	{
+		string switchError;
+		List<NetworkInventory.Switch> switches = NetworkInventory.Switches(out switchError);
+
+		string adapterError;
+		List<NetworkInventory.VmAdapter> adapters = NetworkInventory.VmAdapters(out adapterError);
+
+		List<object> sw = new List<object>();
+		foreach (NetworkInventory.Switch s in switches)
+		{
+			sw.Add(s.ToJson());
+		}
+		List<object> ad = new List<object>();
+		foreach (NetworkInventory.VmAdapter a in adapters)
+		{
+			ad.Add(a.ToJson());
+		}
+
+		// Сеть самого хоста: переиспользуем коллектор, который уже умеет это читать.
+		List<object> hostAdapters = new List<object>();
+		try
+		{
+			foreach (NetConfigCollector.NetAdapter a in NetConfigCollector.ReadAdapters())
+			{
+				Dictionary<string, object> d = Json.Obj();
+				d["name"] = a.Name;
+				d["mac"] = a.Mac;
+				d["dhcp"] = a.Dhcp;
+				d["ip"] = a.Ip;
+				d["subnet"] = a.Subnet;
+				d["gateway"] = a.Gateway;
+				d["dns"] = a.Dns;
+				d["speedMbps"] = a.SpeedMbps;
+				d["status"] = a.Status;
+				hostAdapters.Add(d);
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Warn("Адаптеры хоста: " + ex.Message);
+		}
+
+		Dictionary<string, object> res = Json.Obj();
+		res["switches"] = sw;
+		res["vmAdapters"] = ad;
+		res["hostAdapters"] = hostAdapters;
+		res["switchCount"] = sw.Count;
+		res["adapterCount"] = ad.Count;
+		string err = switchError.Length > 0 ? switchError : adapterError;
+		if (err.Length > 0)
+		{
+			res["error"] = err;
+		}
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// POST /api/network/vlan — сменить VLAN на адаптере ВМ.
+	/// Тело: <c>{"name":"VM","adapter":"Сетевой адаптер","vlan":100,"confirmProtected":false}</c>.
+	/// </summary>
+	private void HandleSetVlan(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав для изменения сети"), 403);
+			return;
+		}
+
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		string adapter = Json.GetStr(body, "adapter", "").Trim();
+		int vlan = Json.Int(Json.Get(body, "vlan"), -1);
+		bool confirmed = Json.Bool(Json.Get(body, "confirmProtected"), dflt: false);
+
+		if (name.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "не указано имя ВМ"), 400);
+			return;
+		}
+		if (vlan < 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "не указан VLAN"), 400);
+			return;
+		}
+
+		// Защищённая машина: смена VLAN рвёт связь, значит нужно подтверждение.
+		string blocked = VmGuard.Check(_settings, name, "stop", confirmed);
+		if (blocked.Length > 0)
+		{
+			_audit.Write(si.User, "vm.vlan", name + " vlan=" + vlan, "отказ: " + blocked + ", IP " + ClientIp(ctx));
+			WriteJson(ctx, Json.Obj("ok", false, "error", blocked, "protected", true), 403);
+			return;
+		}
+
+		VmControl.Result r = NetworkInventory.SetVlan(name, adapter, vlan, confirmed);
+		_audit.Write(si.User, "vm.vlan", name + (adapter.Length > 0 ? " / " + adapter : "") + " → VLAN " + vlan,
+			(r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
+		WriteJson(ctx, r.ToJson(), r.Ok ? 200 : (r.Protected ? 403 : 400));
 	}
 
 	/// <summary>GET /api/orphans — что лежит в отстойнике сирот.</summary>
