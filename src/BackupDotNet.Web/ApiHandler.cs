@@ -9,6 +9,7 @@ using System.Threading;
 using BackupDotNet.Core;
 using BackupDotNet.Core.Backup;
 using BackupDotNet.Core.Inventory;
+using BackupDotNet.Core.Support;
 using BackupDotNet.Deploy;
 using BackupDotNet.Manage;
 
@@ -457,6 +458,16 @@ public class ApiHandler
 			if (path == "/api/branding/raw" && method == "PUT")
 			{
 				HandleBrandingSave(ctx, session);
+				return;
+			}
+			if (path == "/api/support/logpack" && method == "GET")
+			{
+				HandleLogPack(ctx, session);
+				return;
+			}
+			if (path == "/api/support/preview" && method == "GET")
+			{
+				HandleLogPackPreview(ctx, session);
 				return;
 			}
 			if (path == "/api/export/csv" && method == "GET")
@@ -1803,6 +1814,73 @@ public class ApiHandler
 	private static string FmtTime(DateTime dt)
 	{
 		return dt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+	}
+
+	/// <summary>
+	/// GET /api/support/logpack — архив для поддержки или ИИ-анализа.
+	/// Всё обезличено до упаковки: имена, адреса, секреты заменены плейсхолдерами.
+	/// Доступно администратору: там конфигурация и журналы.
+	/// </summary>
+	private void HandleLogPack(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		byte[] zip;
+		Dictionary<string, object> manifest;
+		try
+		{
+			AgentCtx agentCtx = new AgentCtx(_settings, _config, _store);
+			string version = (_scheduler != null) ? _scheduler.Version : "";
+			zip = LogPack.Build(_settings, agentCtx, _prefix, version, out manifest);
+		}
+		catch (Exception ex)
+		{
+			Log.Error("Логпак: " + ex.Message, ex);
+			WriteJson(ctx, Json.Obj("error", "не удалось собрать архив: " + ex.Message), 500);
+			return;
+		}
+
+		string fileName = "support-pack-" + DateTime.Now.ToString("yyyy-MM-dd-HHmm", CultureInfo.InvariantCulture) + ".zip";
+		ctx.Response.ContentType = "application/zip";
+		ctx.Response.AddHeader("Content-Disposition", "attachment; filename=\"" + fileName + "\"");
+		ctx.Response.ContentLength64 = zip.Length;
+		ctx.Response.OutputStream.Write(zip, 0, zip.Length);
+		ctx.Response.Close();
+
+		int files = Json.AsArray(Json.Get(manifest, "files")).Count;
+		_audit.Write(si.User, "support.logpack", "файлов: " + files + ", " + (zip.Length / 1024) + " КБ", ClientIp(ctx));
+		Log.Info("Логпак: собран " + fileName + " — файлов " + files + ", " + zip.Length + " байт");
+	}
+
+	/// <summary>
+	/// GET /api/support/preview — что попадёт в архив и сколько замен будет.
+	/// Позволяет посмотреть до скачивания: вдруг там лишнее.
+	/// </summary>
+	private void HandleLogPackPreview(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		try
+		{
+			AgentCtx agentCtx = new AgentCtx(_settings, _config, _store);
+			string version = (_scheduler != null) ? _scheduler.Version : "";
+			Dictionary<string, object> manifest;
+			byte[] zip = LogPack.Build(_settings, agentCtx, _prefix, version, out manifest);
+			Dictionary<string, object> res = Json.Obj();
+			res["sizeBytes"] = zip.Length;
+			res["manifest"] = manifest;
+			WriteJson(ctx, res, 200);
+		}
+		catch (Exception ex)
+		{
+			WriteJson(ctx, Json.Obj("error", ex.Message), 500);
+		}
 	}
 
 	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)	{

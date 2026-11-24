@@ -2535,6 +2535,10 @@
         '<span class="spacer"></span><span class="muted" style="font-size:11px" id="notify-summary"></span>' +
         '</div><div class="card-body" id="notify-box"><div class="muted">Загрузка…</div></div></div>';
 
+      html += '<div class="card"><div class="card-head"><i class="fas fa-life-ring"></i> Логпак для поддержки' +
+        '<span class="spacer"></span><span class="muted" style="font-size:11px" id="lp-summary"></span>' +
+        '</div><div class="card-body" id="lp-box"><div class="muted">Загрузка…</div></div></div>';
+
       html += '<div class="card"><div class="card-head"><i class="fas fa-file-zipper"></i> Конфигурация' +
         '<span class="spacer"></span>' +
         '<span class="muted" style="font-size:11px">перенос между машинами</span>' +
@@ -2577,6 +2581,7 @@
       loadUpdatesBox();
       loadHistoryBox(s);
       loadNotifyBox();
+      loadLogPackBox();
       wireConfigBundle();
 
       document.getElementById('pwd-form').addEventListener('submit', function (e) {
@@ -2697,6 +2702,91 @@
         });
       });
     }
+  }
+
+  // ------------------------------------------------------------------ логпак для поддержки
+
+  function loadLogPackBox() {
+    var box = document.getElementById('lp-box');
+    if (!box) return;
+
+    var html = '<p class="muted" style="margin:0 0 12px">' +
+      'Архив со всеми журналами, состоянием и конфигурацией — для передачи в поддержку ' +
+      'или ИИ на анализ. <strong>Имена, адреса и секреты заменяются плейсхолдерами ' +
+      'до упаковки</strong>: даже распакованный архив не выдаст, что за хост и кто в нём.</p>' +
+      '<div class="cfg-actions">' +
+      '<button class="btn btn-sm btn-primary" id="lp-build"><i class="fas fa-download"></i> Собрать логпак</button>' +
+      '<button class="btn btn-sm" id="lp-preview"><i class="fas fa-eye"></i> Что попадёт внутрь</button>' +
+      '</div><div id="lp-result"></div>' +
+      '<details style="margin-top:12px"><summary class="muted" style="cursor:pointer;font-size:11.5px">' +
+      'что именно обезличивается</summary>' +
+      '<table class="cfg-table" style="margin-top:8px"><tbody>' +
+      '<tr><td>Пароли, токены, ключи API</td><td><code>&lt;SECRET&gt;</code></td></tr>' +
+      '<tr><td>IP-адреса</td><td><code>&lt;IP&gt;</code> / <code>&lt;IP6&gt;</code></td></tr>' +
+      '<tr><td>Почтовые адреса</td><td><code>&lt;EMAIL&gt;</code></td></tr>' +
+      '<tr><td>Имена машин и домены</td><td><code>&lt;HOST-N&gt;</code></td></tr>' +
+      '<tr><td>Компании, ВМ, люди</td><td><code>&lt;COMPANY-N&gt;</code>, <code>&lt;PERSON-N&gt;</code></td></tr>' +
+      '<tr><td>Пути с именами</td><td><code>C:\\Users\\&lt;USER&gt;\\...</code></td></tr>' +
+      '<tr><td>Сетевые папки</td><td><code>\\\\&lt;HOST&gt;\\&lt;SHARE&gt;</code></td></tr>' +
+      '</tbody></table>' +
+      '<p class="muted" style="font-size:11.5px;margin:8px 0 0">' +
+      'Замена сквозная: одно и то же значение всегда становится одним и тем же плейсхолдером. ' +
+      'По архиву можно рассуждать («HOST-1 не отвечает час»), но нельзя установить, что это за хост.</p>' +
+      '</details>';
+
+    box.innerHTML = html;
+
+    document.getElementById('lp-build').addEventListener('click', function () {
+      window.location.href = '/api/support/logpack';
+      document.getElementById('lp-result').innerHTML =
+        '<div class="cfg-note ok"><i class="fas fa-check-circle"></i> Архив собирается и скачивается…</div>';
+    });
+
+    document.getElementById('lp-preview').addEventListener('click', function () {
+      var btn = this;
+      var res = document.getElementById('lp-result');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Собираю…';
+      res.innerHTML = '<div class="cfg-note"><i class="fas fa-spinner fa-spin"></i> ' +
+        'Проверяю, что попадёт в архив…</div>';
+
+      api('/api/support/preview').then(function (d) {
+        var m = d.manifest || {};
+        var files = m.files || [];
+        var skipped = m.skipped || [];
+        var red = m.redaction || {};
+
+        var rows = files.map(function (f) {
+          return '<tr><td><code>' + esc(f.file) + '</code></td>' +
+            '<td class="muted">' + fmtSize(f.bytes) + '</td></tr>';
+        }).join('');
+
+        var redRows = Object.keys(red).filter(function (k) { return k !== 'knownValues'; })
+          .map(function (k) {
+            return '<tr><td>' + esc(k) + '</td><td>' + red[k] + '</td></tr>';
+          }).join('');
+
+        res.innerHTML = '<div class="cfg-note ok">' +
+          '<strong>Архив: ' + fmtSize(d.sizeBytes) + ', файлов ' + files.length + '</strong>' +
+          '<table class="cfg-table" style="margin-top:8px"><tbody>' + rows + '</tbody></table>' +
+          (redRows
+            ? '<div class="cfg-sub" style="margin-top:10px">Замены при обезличивании:</div>' +
+              '<table class="cfg-table"><tbody>' + redRows + '</tbody></table>'
+            : '') +
+          (skipped.length
+            ? '<div class="cfg-sub" style="margin-top:10px">Пропущено:</div>' +
+              '<ul class="cfg-list">' + skipped.map(function (s) {
+                return '<li><code>' + esc(s.file || s.dir || '') + '</code> — ' + esc(s.reason || '') + '</li>';
+              }).join('') + '</ul>'
+            : '') +
+          '</div>';
+      }).catch(function (err) {
+        res.innerHTML = '<div class="cfg-note error">' + esc(err.message) + '</div>';
+      }).then(function () {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-eye"></i> Что попадёт внутрь';
+      });
+    });
   }
 
   // ------------------------------------------------------------------ уведомления
