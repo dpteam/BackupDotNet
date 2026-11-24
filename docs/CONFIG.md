@@ -102,7 +102,12 @@ netsh http add urlacl url=http://+:8080/ user="NT AUTHORITY\SYSTEM"
 | `history.rollupKeepMonths` | `60` | сколько месяцев хранить суточные сводки |
 | `history.autoPrune` | `true` | чистить старое при запуске |
 | `updates.enabled` | `false` | включить проверку обновлений |
-| `updates.path` | — | каталог или сетевая папка с `latest.json` |
+| `updates.source` | `local` | `local` (папка) или `github` (GitHub Releases) |
+| `updates.path` | — | каталог или сетевая папка с `latest.json` (для `local`) |
+| `updates.githubRepo` | — | репозиторий в виде `владелец/название` (для `github`) |
+| `updates.githubApiBase` | — | адрес API; пусто — `https://api.github.com`, меняется для GitHub Enterprise |
+| `updates.githubTokenSecret` | — | ключ в `secrets.json` с токеном GitHub (приватные репозитории) |
+| `updates.allowInstall` | `false` | разрешить установку обновления кнопкой из интерфейса |
 | `updates.checkOnStart` | `true` | проверять при старте |
 | `backup.destination` | — | куда складывать бэкапы по умолчанию (пусто — `dataDir\backups\store`) |
 | `backup.retention.*` | — | политика хранения копий: `keepCount`, `keepDays`, `gfs.daily/weekly/monthly`, `protectLast`, `maxDeletePerRun` |

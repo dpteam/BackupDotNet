@@ -96,6 +96,28 @@ public class Settings
 
 	public bool UpdatesCheckOnStart = true;
 
+	// ------------------------------------------------------------------ обновления с GitHub
+
+	/// <summary>Источник обновлений: <c>local</c> (папка) или <c>github</c>.</summary>
+	public string UpdatesSource = "local";
+
+	/// <summary>Репозиторий GitHub в виде <c>владелец/репозиторий</c>.</summary>
+	public string UpdatesGitHubRepo = "";
+
+	/// <summary>
+	/// Адрес API. Пусто — <c>https://api.github.com</c>.
+	/// Меняется для GitHub Enterprise и для проверки на локальной заглушке.
+	/// </summary>
+	public string UpdatesGitHubApiBase = "";
+
+	/// <summary>Разрешить установку прямо из интерфейса (по умолчанию только скачивание).</summary>
+	public bool UpdatesAllowInstall;
+
+	/// <summary>Токен GitHub для приватных репозиториев. Пусто — анонимный доступ.</summary>
+	public string UpdatesGitHubTokenSecret = "";
+
+	public string UpdatesGitHubToken = "";
+
 	// ------------------------------------------------------------------ бэкапы
 
 	/// <summary>Куда складывать бэкапы по умолчанию. Пусто — dataDir\backups\store.</summary>
@@ -211,6 +233,12 @@ public class Settings
 		s.UpdatesEnabled = Json.Bool(Json.Get(upd, "enabled"), s.UpdatesEnabled);
 		s.UpdatesPath = Json.GetStr(upd, "path", s.UpdatesPath);
 		s.UpdatesCheckOnStart = Json.Bool(Json.Get(upd, "checkOnStart"), s.UpdatesCheckOnStart);
+		s.UpdatesSource = Json.GetStr(upd, "source", s.UpdatesSource);
+		s.UpdatesGitHubRepo = Json.GetStr(upd, "githubRepo", s.UpdatesGitHubRepo);
+		s.UpdatesGitHubApiBase = Json.GetStr(upd, "githubApiBase", s.UpdatesGitHubApiBase);
+		s.UpdatesAllowInstall = Json.Bool(Json.Get(upd, "allowInstall"), s.UpdatesAllowInstall);
+		s.UpdatesGitHubTokenSecret = Json.GetStr(upd, "githubTokenSecret", s.UpdatesGitHubTokenSecret);
+		s.UpdatesGitHubToken = Json.GetStr(upd, "githubToken", s.UpdatesGitHubToken);
 
 		Dictionary<string, object> bk = Json.AsObject(Json.Get(root, "backup"));
 		s.BackupDestination = Json.GetStr(bk, "destination", s.BackupDestination);

@@ -2526,6 +2526,10 @@
         '<span class="spacer"></span><span class="muted" style="font-size:11px" id="upd-summary"></span>' +
         '</div><div class="card-body" id="upd-box"><div class="muted">Загрузка…</div></div></div>';
 
+      html += '<div class="card"><div class="card-head"><i class="fab fa-github"></i> Обновления с GitHub' +
+        '<span class="spacer"></span><span class="muted" style="font-size:11px">проверка, скачивание, установка</span>' +
+        '</div><div class="card-body" id="ghu-box"><div class="muted">Загрузка…</div></div></div>';
+
       html += '<div class="card"><div class="card-head"><i class="fas fa-database"></i> Хранение истории' +
         '<span class="spacer"></span>' +
         (state.me && state.me.canManageUsers ? '<button class="btn btn-sm" id="hist-prune"><i class="fas fa-broom"></i> Прибрать</button>' : '') +
@@ -2579,6 +2583,7 @@
       loadAgents();
       loadBrandingBox();
       loadUpdatesBox();
+      loadGitHubUpdatesBox();
       loadHistoryBox(s);
       loadNotifyBox();
       loadLogPackBox();
@@ -2602,9 +2607,19 @@
 
   // ------------------------------------------------------------------ обновления
 
+  var updState = { timer: null, data: null };
+
+  function stopUpdatesPolling() {
+    if (updState.timer) {
+      clearInterval(updState.timer);
+      updState.timer = null;
+    }
+  }
+
   function loadUpdatesBox() {
     var box = document.getElementById('upd-box');
     if (!box) return;
+    stopUpdatesPolling();
 
     api('/api/updates').then(function (u) {
       var summary = document.getElementById('upd-summary');
@@ -2612,8 +2627,14 @@
       if (!u.enabled) {
         if (summary) summary.textContent = 'выключено';
         box.innerHTML = '<p class="muted" style="margin:0">Проверка обновлений выключена. ' +
-          'Включите <code>updates.enabled</code> и укажите <code>updates.path</code> — ' +
-          'локальный каталог или сетевую папку с манифестом <code>' + esc('latest.json') + '</code>.</p>';
+          'Включите <code>updates.enabled</code> в <code>config/settings.json</code>.</p>' +
+          '<div class="kv" style="margin-top:10px">' +
+          '<div class="k">Источник</div><div><code>updates.source</code>: <code>local</code> (папка) ' +
+          'или <code>github</code></div>' +
+          '<div class="k">GitHub</div><div><code>updates.githubRepo</code> = <code>владелец/репозиторий</code></div>' +
+          '<div class="k">Установка</div><div><code>updates.allowInstall = true</code> разрешает ' +
+          'ставить обновление кнопкой</div>' +
+          '</div>';
         return;
       }
 
@@ -2648,6 +2669,174 @@
     }).catch(function (err) {
       box.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
     });
+  }
+
+  // ---------------------------------------------------- обновления с GitHub
+
+  function loadGitHubUpdatesBox() {
+    var box = document.getElementById('ghu-box');
+    if (!box) return;
+    stopUpdatesPolling();
+
+    function draw() {
+      api('/api/updates/status').then(function (st) {
+        var s = st.state || {};
+        var staged = (st.staged && st.staged.staged) || [];
+        var backups = (st.staged && st.staged.backups) || [];
+        var rel = s.latest || null;
+
+        var html = '<div class="kv">' +
+          '<div class="k">Репозиторий</div><div><code>' + esc(st.repo || 'не задан') + '</code></div>' +
+          '<div class="k">Источник</div><div><code>' + esc(st.source || 'local') + '</code>' +
+            (st.source === 'github' ? ' — GitHub включён' : ' — локальная папка') + '</div>' +
+          '<div class="k">Установка кнопкой</div><div>' +
+            (st.allowInstall ? 'разрешена' : 'запрещена (<code>updates.allowInstall</code>)') + '</div>' +
+          '</div>';
+
+        // прогресс
+        if (s.status === 'downloading' || s.status === 'checking') {
+          html += '<div class="upd-banner" style="margin-top:12px">' +
+            '<i class="fas fa-spinner fa-spin"></i>' +
+            '<div><div class="upd-title">' + esc(s.message || 'работаю…') + '</div>' +
+            '<div class="upd-sub">' + (s.progress || 0) + '%</div></div></div>' +
+            '<div class="bar" style="margin-top:8px"><i style="width:' + (s.progress || 3) + '%"></i></div>';
+        } else if (s.error) {
+          html += '<div class="cfg-note error" style="margin-top:12px">' + esc(s.error) + '</div>';
+        } else if (rel) {
+          html += '<div class="upd-banner" style="margin-top:12px">' +
+            '<i class="fas fa-tag"></i>' +
+            '<div><div class="upd-title">Релиз ' + esc(rel.version) + '</div>' +
+            '<div class="upd-sub">' + esc(rel.assetName) + ' · ' + fmtSize(rel.sizeBytes) +
+            (rel.publishedAt ? ' · ' + esc(fmtDate(rel.publishedAt)) : '') + '</div></div></div>';
+          if (rel.notes) {
+            html += '<div class="upd-notes" style="margin-top:10px">' + esc(rel.notes) + '</div>';
+          }
+          if (rel.digest) {
+            html += '<p class="muted" style="font-size:11px;margin:6px 0 0">' +
+              'Контрольная сумма: <code>' + esc(rel.digest) + '</code></p>';
+          } else {
+            html += '<p class="muted" style="font-size:11px;margin:6px 0 0">' +
+              'GitHub не предоставил контрольную сумму — будет проверена только структура архива.</p>';
+          }
+        }
+
+        // подготовленные версии
+        if (staged.length) {
+          html += '<div class="cfg-sub" style="margin-top:12px">Подготовлено к установке:</div>' +
+            '<table class="cfg-table"><tbody>' + staged.map(function (x) {
+              return '<tr><td><strong>' + esc(x.version) + '</strong></td>' +
+                '<td class="muted">' + fmtSize(x.bytes) + '</td>' +
+                '<td>' + (st.allowInstall
+                  ? '<button class="btn btn-sm btn-primary" data-install="' + esc(x.version) + '">' +
+                    '<i class="fas fa-download"></i> Установить</button>'
+                  : '<span class="muted" style="font-size:11px">установка запрещена</span>') + '</td></tr>';
+            }).join('') + '</tbody></table>';
+        }
+
+        // резервные копии
+        if (backups.length) {
+          html += '<details style="margin-top:12px"><summary class="muted" style="cursor:pointer;font-size:11.5px">' +
+            'резервные копии прежних версий (' + backups.length + ')</summary>' +
+            '<table class="cfg-table" style="margin-top:6px"><tbody>' + backups.slice(0, 8).map(function (b) {
+              return '<tr><td><code>' + esc(b.name) + '</code></td>' +
+                '<td class="muted" style="font-size:11px">' + esc(fmtDateTime(b.createdAt)) + '</td></tr>';
+            }).join('') + '</tbody></table>' +
+            '<p class="muted" style="font-size:11px;margin:6px 0 0">Откат: остановите службу, скопируйте ' +
+            'содержимое каталога обратно в папку программы, запустите.</p></details>';
+        }
+
+        html += '<div class="cfg-actions" style="margin-top:12px">' +
+          '<button class="btn btn-sm btn-primary" id="ghu-check"><i class="fas fa-cloud-arrow-down"></i> ' +
+            'Проверить обновления</button>' +
+          '<button class="btn btn-sm" id="ghu-download"' + (rel ? '' : ' disabled') + '>' +
+            '<i class="fas fa-download"></i> Скачать' + (rel ? ' ' + esc(rel.version) : '') + '</button>' +
+          '</div><div id="ghu-result"></div>';
+
+        box.innerHTML = html;
+
+        document.getElementById('ghu-check').addEventListener('click', function () {
+          var btn = this;
+          btn.disabled = true;
+          btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Проверяю…';
+          document.getElementById('ghu-result').innerHTML =
+            '<div class="cfg-note"><i class="fas fa-spinner fa-spin"></i> Запрашиваю GitHub…</div>';
+          api('/api/updates/check', { method: 'POST', body: {} }).then(function (r) {
+            if (!r.ok) {
+              document.getElementById('ghu-result').innerHTML =
+                '<div class="cfg-note error">' + esc(r.error) + '</div>';
+              return;
+            }
+            if (r.available) {
+              document.getElementById('ghu-result').innerHTML =
+                '<div class="cfg-note ok"><i class="fas fa-circle-up"></i> Доступна версия ' +
+                esc(r.release.version) + ' (установлена ' + esc(r.currentVersion) + ')</div>';
+            } else {
+              document.getElementById('ghu-result').innerHTML =
+                '<div class="cfg-note ok"><i class="fas fa-check-circle"></i> Установлена последняя версия: ' +
+                esc(r.currentVersion) + '</div>';
+            }
+            draw();
+          }).catch(function (err) {
+            document.getElementById('ghu-result').innerHTML =
+              '<div class="cfg-note error">' + esc(err.message) + '</div>';
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-cloud-arrow-down"></i> Проверить обновления';
+          });
+        });
+
+        var dl = document.getElementById('ghu-download');
+        if (dl) {
+          dl.addEventListener('click', function () {
+            dl.disabled = true;
+            document.getElementById('ghu-result').innerHTML =
+              '<div class="cfg-note"><i class="fas fa-spinner fa-spin"></i> ' +
+              'Скачиваю и проверяю архив…</div>';
+            draw(); // покажет прогресс
+            api('/api/updates/download', { method: 'POST', body: {} }).then(function (r) {
+              document.getElementById('ghu-result').innerHTML =
+                '<div class="cfg-note ok"><i class="fas fa-check-circle"></i> ' +
+                'Версия ' + esc(r.version) + ' скачана и подготовлена (' + fmtSize(r.sizeBytes) + ')</div>';
+              draw();
+            }).catch(function (err) {
+              document.getElementById('ghu-result').innerHTML =
+                '<div class="cfg-note error">' + esc(err.message) + '</div>';
+              draw();
+            });
+          });
+        }
+
+        $$('[data-install]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var v = btn.getAttribute('data-install');
+            if (!confirm('Установить версию ' + v + '?\n\n' +
+              'Агент завершится, файлы будут заменены и служба запустится снова. ' +
+              'Текущая версия сохранится в резервную копию. ' +
+              'Прерванная установка откатывается копированием каталога обратно.')) return;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Ставлю…';
+            api('/api/updates/install', { method: 'POST', body: { version: v } }).then(function (r) {
+              document.getElementById('ghu-result').innerHTML =
+                '<div class="cfg-note ok"><i class="fas fa-check-circle"></i> ' + esc(r.message) + '</div>';
+            }).catch(function (err) {
+              document.getElementById('ghu-result').innerHTML =
+                '<div class="cfg-note error">' + esc(err.message) + '</div>';
+              btn.disabled = false;
+              btn.innerHTML = '<i class="fas fa-download"></i> Установить';
+            });
+          });
+        });
+
+        // Пока идёт загрузка — обновляем прогресс.
+        if (s.status === 'downloading' || s.status === 'checking') {
+          stopUpdatesPolling();
+          updState.timer = setInterval(draw, 1000);
+        }
+      }).catch(function (err) {
+        box.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
+      });
+    }
+
+    draw();
   }
 
   // ------------------------------------------------------------------ хранение истории

@@ -67,7 +67,12 @@
   },
   "updates": {
     "enabled": false,
+    "source": "local",
     "path": "\\\\fileserver\\BackupDotNet\\latest",
+    "githubRepo": "",
+    "githubApiBase": "",
+    "githubTokenSecret": "github-token",
+    "allowInstall": false,
     "checkOnStart": true
   },
   "notifications": {

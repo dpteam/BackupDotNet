@@ -22,7 +22,7 @@
     <AssemblyTitle>BackupDotNet</AssemblyTitle>
     <Description>Мониторинг бэкапов, доступности и железа</Description>
     <Copyright>BackupDotNet contributors</Copyright>
-    <VersionPrefix>1.0.0</VersionPrefix>
+    <VersionPrefix>1.0.1</VersionPrefix>
     <NeutralLanguage>ru-RU</NeutralLanguage>
     <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>

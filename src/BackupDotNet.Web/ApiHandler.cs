@@ -10,6 +10,7 @@ using BackupDotNet.Core;
 using BackupDotNet.Core.Backup;
 using BackupDotNet.Core.Inventory;
 using BackupDotNet.Core.Support;
+using BackupDotNet.Core.Update;
 using BackupDotNet.Deploy;
 using BackupDotNet.Manage;
 
@@ -155,6 +156,9 @@ public class ApiHandler
 				return;
 			case "/api/updates":
 				HandleUpdates(ctx, session);
+				return;
+			case "/api/updates/status":
+				HandleUpdateStatus(ctx, session);
 				return;
 			case "/api/backup/engines":
 				HandleBackupEngines(ctx, session);
@@ -463,6 +467,21 @@ public class ApiHandler
 			if (path == "/api/support/logpack" && method == "GET")
 			{
 				HandleLogPack(ctx, session);
+				return;
+			}
+			if (path == "/api/updates/check" && method == "POST")
+			{
+				HandleUpdateCheck(ctx, session);
+				return;
+			}
+			if (path == "/api/updates/download" && method == "POST")
+			{
+				HandleUpdateDownload(ctx, session);
+				return;
+			}
+			if (path == "/api/updates/install" && method == "POST")
+			{
+				HandleUpdateInstall(ctx, session);
 				return;
 			}
 			if (path == "/api/support/preview" && method == "GET")
@@ -1881,6 +1900,169 @@ public class ApiHandler
 		{
 			WriteJson(ctx, Json.Obj("error", ex.Message), 500);
 		}
+	}
+
+	/// <summary>
+	/// POST /api/updates/check — проверить релиз на GitHub.
+	/// </summary>
+	private void HandleUpdateCheck(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		string current = (_scheduler != null) ? _scheduler.Version : "";
+		string error;
+		GitHubUpdater.Release rel = GitHubUpdater.Check(_settings, current, out error);
+
+		Dictionary<string, object> res = Json.Obj();
+		res["currentVersion"] = current;
+		if (rel == null)
+		{
+			res["ok"] = false;
+			res["error"] = error;
+			WriteJson(ctx, res, 200);
+			return;
+		}
+
+		res["ok"] = true;
+		res["release"] = rel.ToJson();
+		res["available"] = UpdateChecker.Compare(rel.Version, current) > 0;
+		res["upToDate"] = UpdateChecker.Compare(rel.Version, current) <= 0;
+		res["allowInstall"] = _settings.UpdatesAllowInstall;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// POST /api/updates/download — скачать архив релиза и распаковать в staging.
+	/// Тело: <c>{"version":"1.2.0"}</c> (необязательно — берётся последний релиз).
+	/// </summary>
+	private void HandleUpdateDownload(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		string current = (_scheduler != null) ? _scheduler.Version : "";
+		string error;
+
+		// Всегда перепроверяем релиз: между «проверить» и «скачать» он мог смениться.
+		GitHubUpdater.Release rel = GitHubUpdater.Check(_settings, current, out error);
+		if (rel == null)
+		{
+			WriteJson(ctx, Json.Obj("error", error), 400);
+			return;
+		}
+
+		string path = GitHubUpdater.Download(_settings, rel, out error);
+		if (path == null)
+		{
+			WriteJson(ctx, Json.Obj("error", error), 400);
+			return;
+		}
+
+		string staging = UpdateInstaller.Stage(_settings, path, rel.Version, out error);
+		if (staging == null)
+		{
+			WriteJson(ctx, Json.Obj("error", error), 400);
+			return;
+		}
+
+		_audit.Write(si.User, "update.download", rel.Version, ClientIp(ctx));
+		Dictionary<string, object> res = Json.Obj();
+		res["ok"] = true;
+		res["version"] = rel.Version;
+		res["staged"] = staging;
+		res["sizeBytes"] = new FileInfo(path).Length;
+		res["notes"] = rel.Notes;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// POST /api/updates/install — применить скачанное обновление.
+	/// Агент завершится: файлы подменяет отдельный скрипт после выхода процесса.
+	/// </summary>
+	private void HandleUpdateInstall(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		if (!_settings.UpdatesAllowInstall)
+		{
+			WriteJson(ctx, Json.Obj("error",
+				"установка из интерфейса запрещена. Включите updates.allowInstall в config/settings.json " +
+				"или распакуйте архив вручную"), 403);
+			return;
+		}
+
+		Dictionary<string, object> body = ReadJson(ctx);
+		string version = Json.GetStr(body, "version", "").Trim();
+		if (version.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "не указана версия"), 400);
+			return;
+		}
+
+		// Ищем подготовленный каталог этой версии.
+		string stagingRoot = Path.Combine(_settings.DataDir, "updates", "staging");
+		string staging = Path.Combine(stagingRoot, version);
+		if (!Directory.Exists(staging))
+		{
+			WriteJson(ctx, Json.Obj("error", "версия " + version + " не подготовлена к установке. Сначала скачайте её."), 400);
+			return;
+		}
+
+		bool asService = !Environment.UserInteractive;
+		string error;
+		string script = UpdateInstaller.Launch(_settings, staging, version, asService,
+			Branding.Current.ServiceName, out error);
+		if (script == null)
+		{
+			WriteJson(ctx, Json.Obj("error", error), 500);
+			return;
+		}
+
+		_audit.Write(si.User, "update.install", version, ClientIp(ctx));
+		Log.Warn("Обновление: запущена установка версии " + version + ", агент завершается");
+
+		Dictionary<string, object> res = Json.Obj();
+		res["ok"] = true;
+		res["version"] = version;
+		res["script"] = script;
+		res["message"] = "Установка запущена. Агент завершится через несколько секунд и " +
+			"запустится снова уже новой версией. Обновите страницу через минуту.";
+		WriteJson(ctx, res, 200);
+
+		// Даём ответу уйти, потом завершаем процесс: скрипт ждёт именно этого.
+		ThreadPool.QueueUserWorkItem(_ =>
+		{
+			Thread.Sleep(1500);
+			try
+			{
+				Log.Warn("Обновление: завершаю процесс для подмены файлов");
+				Log.Shutdown();
+			}
+			catch
+			{
+			}
+			Environment.Exit(0);
+		});
+	}
+
+	/// <summary>GET /api/updates/status — прогресс загрузки и что уже подготовлено.</summary>
+	private void HandleUpdateStatus(HttpListenerContext ctx, SessionInfo si)
+	{
+		Dictionary<string, object> res = Json.Obj();
+		res["state"] = GitHubUpdater.Current.ToJson();
+		res["staged"] = UpdateInstaller.StagedInfo(_settings);
+		res["allowInstall"] = _settings.UpdatesAllowInstall;
+		res["source"] = _settings.UpdatesSource;
+		res["repo"] = _settings.UpdatesGitHubRepo;
+		WriteJson(ctx, res, 200);
 	}
 
 	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)	{
