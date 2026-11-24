@@ -7,6 +7,7 @@ using System.Net.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Threading;
 
 namespace BackupDotNet.Core.Update;
 
@@ -135,6 +136,56 @@ public static class GitHubUpdater
 	}
 
 	// ------------------------------------------------------------------ проверка
+
+	/// <summary>
+	/// Проверка обновлений при старте — в фоне. Запуск службы не ждёт сеть:
+	/// без интернета агент просто пишет предупреждение в журнал. Результат
+	/// попадает в <see cref="Current"/>, поэтому интерфейс сразу показывает
+	/// доступную версию.
+	/// </summary>
+	public static void StartBootCheck(Settings settings, string currentVersion)
+	{
+		if (settings == null || !settings.UpdatesEnabled || !settings.UpdatesCheckOnStart)
+		{
+			return;
+		}
+		if (string.IsNullOrWhiteSpace(settings.UpdatesGitHubRepo))
+		{
+			return;
+		}
+
+		Thread t = new Thread(() =>
+		{
+			try
+			{
+				Release r = Check(settings, currentVersion, out string error);
+				if (error.Length > 0)
+				{
+					Log.Warn("Проверка обновлений при старте: " + error);
+					return;
+				}
+				if (r == null)
+				{
+					return;
+				}
+				if (UpdateChecker.Compare(r.Version, currentVersion) > 0)
+				{
+					Log.Info("Доступна новая версия " + r.Version + " (установлена " + currentVersion + ")");
+				}
+				else
+				{
+					Log.Info("Обновлений нет: " + currentVersion + " — последняя версия");
+				}
+			}
+			catch (Exception ex)
+			{
+				Log.Warn("Проверка обновлений при старте: " + ex.Message);
+			}
+		});
+		t.IsBackground = true;
+		t.Name = "update-boot-check";
+		t.Start();
+	}
 
 	/// <summary>
 	/// Читает последний релиз из GitHub. Ничего не скачивает.

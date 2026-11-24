@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.ServiceProcess;
 using BackupDotNet.Core;
+using BackupDotNet.Core.Update;
 using BackupDotNet.Web;
 
 namespace BackupDotNet;
@@ -48,6 +49,7 @@ public class AgentService : ServiceBase
 			AuditLog audit = new AuditLog(cfg.Settings.DataDir);
 			_web = new WebHost(cfg.Settings, cfg, _store, _scheduler, auth, audit);
 			_web.Start();
+			GitHubUpdater.StartBootCheck(cfg.Settings, Program.AgentVersion);
 			Program.Diag("OnStart web ok: " + _web.ActualPrefix);
 			Log.Info("Служба запущена");
 			Program.Diag("OnStart done");

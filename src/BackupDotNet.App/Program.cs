@@ -6,6 +6,7 @@ using System.ServiceProcess;
 using System.Text;
 using System.Threading;
 using BackupDotNet.Core;
+using BackupDotNet.Core.Update;
 using BackupDotNet.Web;
 
 namespace BackupDotNet;
@@ -270,6 +271,7 @@ public static class Program
 		AuditLog audit = new AuditLog(cfg.Settings.DataDir);
 		WebHost web = new WebHost(cfg.Settings, cfg, store, scheduler, auth, audit);
 		web.Start();
+		GitHubUpdater.StartBootCheck(cfg.Settings, AgentVersion);
 		string url = "http://localhost:" + cfg.Settings.HttpPort + "/";
 		Log.Info("Веб-интерфейс: " + url);
 		Console.WriteLine();
