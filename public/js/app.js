@@ -4348,7 +4348,7 @@
 
     var html = '<table class="journal-table"><thead><tr>' +
       '<th>ВМ</th><th>Состояние</th><th>vCPU</th><th>Память</th>' +
-      '<th>Диски</th><th>Снимки</th><th>IP</th><th>Аптайм</th>' +
+      '<th>Диски</th><th>Снимки</th><th>IP</th><th>Аптайм</th><th style="width:1%"></th>' +
       '</tr></thead><tbody>';
 
     vms.forEach(function (v) {
@@ -4381,11 +4381,256 @@
         '<td>' + snap + '</td>' +
         '<td style="font-size:11.5px">' + (v.ip ? '<code>' + esc(v.ip) + '</code>' : '<span class="muted">—</span>') + '</td>' +
         '<td class="muted" style="font-size:11.5px">' + fmtUptimeShort(v.uptimeHours) + '</td>' +
+        '<td style="white-space:nowrap">' + vmActionButtons(v) + '</td>' +
         '</tr>';
     });
 
     html += '</tbody></table>';
     box.innerHTML = html;
+
+    box.querySelectorAll('[data-vm-act]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        vmPower(this.getAttribute('data-vm'), this.getAttribute('data-vm-act'),
+          this.getAttribute('data-vm-force') === '1', this);
+      });
+    });
+
+    box.querySelectorAll('[data-vm-snap]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        showVmSnapshots(this.getAttribute('data-vm-snap'));
+      });
+    });
+  }
+
+  /** Кнопки управления питанием и снимками для строки таблицы. */
+  function vmActionButtons(v) {
+    if (!canWrite()) return '<span class="muted" title="нужны права на запись">—</span>';
+
+    var out = [];
+    function act(action, icon, title, force) {
+      out.push('<button class="btn btn-sm" data-vm="' + esc(v.name) + '" data-vm-act="' + action + '"' +
+        (force ? ' data-vm-force="1"' : '') + ' title="' + esc(title) + '">' +
+        '<i class="fas ' + icon + '"></i></button>');
+    }
+
+    var st = String(v.state || '').toLowerCase();
+    if (v.running) {
+      act('pause', 'fa-pause', 'Пауза');
+      act('shutdown', 'fa-power-off', 'Штатное выключение');
+      act('stop', 'fa-bolt', 'Жёсткое выключение', true);
+    } else if (st.indexOf('пауза') >= 0) {
+      act('resume', 'fa-play', 'Возобновить');
+    } else {
+      act('start', 'fa-play', 'Запустить');
+    }
+
+    out.push('<button class="btn btn-sm" data-vm-snap="' + esc(v.name) + '" title="Снимки">' +
+      '<i class="fas fa-camera"></i></button>');
+    return out.join(' ');
+  }
+
+  /** Питание ВМ: подтверждение для опасных действий, затем запрос. */
+  function vmPower(name, action, force, btn) {
+    var labels = {
+      start: 'запустить',
+      shutdown: 'выполнить штатное выключение',
+      stop: 'жёстко выключить (данные в гостевой ОС могут потеряться)',
+      reboot: 'перезагрузить',
+      reset: 'сбросить питание',
+      pause: 'поставить на паузу',
+      resume: 'возобновить'
+    };
+    var risky = action === 'shutdown' || action === 'stop' || action === 'reset' ||
+      action === 'reboot' || action === 'save';
+    if (risky && !window.confirm('ВМ «' + name + '»: ' + (labels[action] || action) + '?')) return;
+
+    var old = btn ? btn.innerHTML : null;
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    }
+
+    api('/api/vm/power', { method: 'POST', body: { name: name, action: action, force: !!force } })
+      .then(function (r) {
+        toast(r.message || 'готово', r.ok ? 'ok' : 'error');
+        // Полный опрос инвентаря занимает секунды (размеры дисков). Обновляем
+        // строку сразу по известному целевому состоянию, а остальное — фоном.
+        vmPatchLocal(name, { state: powerTargetState(action), running: powerTargetState(action) === 'работает' });
+        drawVmList();
+        refreshInventorySilently();
+      })
+      .catch(function (err) {
+        toast('Ошибка: ' + err.message, 'error');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = old;
+        }
+      });
+  }
+
+  /** Целевое состояние ВМ по действию — для мгновенного обновления строки. */
+  function powerTargetState(action) {
+    switch (action) {
+    case 'start':
+    case 'resume':
+    case 'reboot':
+    case 'reset':
+      return 'работает';
+    case 'pause':
+      return 'пауза';
+    case 'shutdown':
+    case 'stop':
+      return 'выключена';
+    case 'save':
+      return 'сохранена';
+    default:
+      return null;
+    }
+  }
+
+  /** Правит одну ВМ в локальном состоянии инвентаря без полного опроса. */
+  function vmPatchLocal(name, patch) {
+    var vms = (invState.data && invState.data.vms) || [];
+    for (var i = 0; i < vms.length; i++) {
+      if (vms[i].name !== name) continue;
+      if (patch.state) vms[i].state = patch.state;
+      if (patch.running !== undefined) vms[i].running = patch.running;
+      if (patch.checkpoints !== undefined) {
+        vms[i].checkpoints = patch.checkpoints;
+        var t = invState.data.totals || {};
+        if (t.withSnapshots !== undefined) {
+          t.withSnapshots = vms.filter(function (x) { return x.checkpoints > 0; }).length;
+        }
+      }
+      return;
+    }
+  }
+
+  /** Тихое обновление инвентаря без перерисовки всей страницы. */
+  function refreshInventorySilently() {
+    api('/api/inventory?refresh=1').then(function (d) {
+      invState.data = d;
+      drawVmList();
+    }).catch(function () { });
+  }
+
+  /** Диалог снимков ВМ: список, создание, откат, удаление. */
+  function showVmSnapshots(name) {
+    var div = document.createElement('div');
+    div.innerHTML = '<div class="modal-backdrop" id="vm-snap-modal"><div class="modal modal-wide">' +
+      '<h3><i class="fas fa-camera"></i> Снимки: ' + esc(name) + '</h3>' +
+      (canWrite()
+        ? '<div style="display:flex;gap:8px;margin-bottom:12px">' +
+          '<input type="text" id="vm-snap-name" placeholder="имя снимка (необязательно)" style="flex:1">' +
+          '<button class="btn btn-primary" id="vm-snap-create"><i class="fas fa-plus"></i> Создать</button>' +
+          '</div>'
+        : '') +
+      '<div id="vm-snap-body"><span class="muted"><i class="fas fa-spinner fa-spin"></i> загружаю…</span></div>' +
+      '<div class="modal-actions" style="margin-top:14px">' +
+      '<button class="btn" id="vm-snap-close">Закрыть</button>' +
+      '</div></div></div>';
+    document.body.appendChild(div.firstChild);
+
+    document.getElementById('vm-snap-close').addEventListener('click', function () {
+      var m = document.getElementById('vm-snap-modal');
+      if (m) m.parentNode.removeChild(m);
+    });
+
+    var createBtn = document.getElementById('vm-snap-create');
+    if (createBtn) {
+      createBtn.addEventListener('click', function () {
+        var input = document.getElementById('vm-snap-name');
+        var snapName = input ? input.value.trim() : '';
+        createBtn.disabled = true;
+        createBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Создаю…';
+        api('/api/vm/snapshot/create', { method: 'POST', body: { name: name, snapshotName: snapName } })
+          .then(function (r) {
+            toast(r.message || 'снимок создан', r.ok ? 'ok' : 'error');
+            if (input) input.value = '';
+            loadVmSnapshotsInto(name);
+            refreshInventorySilently();
+          })
+          .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); })
+          .then(function () {
+            createBtn.disabled = false;
+            createBtn.innerHTML = '<i class="fas fa-plus"></i> Создать';
+          });
+      });
+    }
+
+    loadVmSnapshotsInto(name);
+  }
+
+  function loadVmSnapshotsInto(name) {
+    var body = document.getElementById('vm-snap-body');
+    if (!body) return;
+
+    api('/api/vm/snapshots?name=' + encodeURIComponent(name)).then(function (d) {
+      var snaps = d.snapshots || [];
+      // Счётчик снимков в таблице обновляем сразу, не дожидаясь полного опроса.
+      vmPatchLocal(name, { checkpoints: snaps.length });
+      drawVmList();
+      if (!snaps.length) {
+        body.innerHTML = '<p class="muted" style="margin:0">Снимков нет.</p>';
+        return;
+      }
+
+      var html = '<table class="cfg-table"><thead><tr>' +
+        '<th>Имя</th><th>Создан</th><th>Возраст</th>' +
+        (canWrite() ? '<th style="width:1%"></th>' : '') +
+        '</tr></thead><tbody>';
+
+      snaps.forEach(function (s) {
+        html += '<tr>' +
+          '<td>' + esc(s.name || '(без имени)') + '</td>' +
+          '<td class="muted" style="font-size:11.5px;white-space:nowrap">' + esc(fmtDateTime(s.createdAt)) + '</td>' +
+          '<td class="muted" style="font-size:11.5px;white-space:nowrap">' +
+            (s.ageDays != null ? s.ageDays + ' дн.' : '—') + '</td>' +
+          (canWrite()
+            ? '<td style="white-space:nowrap">' +
+              '<button class="btn btn-sm" data-snap-apply="' + esc(s.id) + '" title="Откатить к снимку">' +
+              '<i class="fas fa-undo"></i></button> ' +
+              '<button class="btn btn-sm btn-danger" data-snap-del="' + esc(s.id) + '" title="Удалить снимок">' +
+              '<i class="fas fa-trash"></i></button></td>'
+            : '') +
+          '</tr>';
+      });
+
+      html += '</tbody></table>' +
+        '<p class="muted" style="font-size:11.5px;margin-top:10px">' +
+        'Откат возвращает ВМ к состоянию на момент снимка: изменения после него теряются. ' +
+        'Удаление снимка данные ВМ не трогает — только точку возврата.</p>';
+
+      body.innerHTML = html;
+
+      body.querySelectorAll('[data-snap-apply]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = this.getAttribute('data-snap-apply');
+          if (!window.confirm('Откатить «' + name + '» к этому снимку? Изменения после снимка будут потеряны.')) return;
+          snapAction('/api/vm/snapshot/apply', { name: name, snapshot: id }, name);
+        });
+      });
+
+      body.querySelectorAll('[data-snap-del]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = this.getAttribute('data-snap-del');
+          if (!window.confirm('Удалить этот снимок «' + name + '»?')) return;
+          snapAction('/api/vm/snapshot/delete', { name: name, snapshot: id }, name);
+        });
+      });
+    }).catch(function (err) {
+      body.innerHTML = '<p style="color:var(--fail)">Ошибка: ' + esc(err.message) + '</p>';
+    });
+  }
+
+  function snapAction(url, body, vmName) {
+    api(url, { method: 'POST', body: body }).then(function (r) {
+      toast(r.message || 'готово', r.ok ? 'ok' : 'error');
+      loadVmSnapshotsInto(vmName);
+      refreshInventorySilently();
+    }).catch(function (err) {
+      toast('Ошибка: ' + err.message, 'error');
+    });
   }
 
   /** Гигиена: сироты, старые снимки, давно выключенные ВМ. */

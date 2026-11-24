@@ -177,6 +177,9 @@ public class ApiHandler
 				return;
 			case "/api/hygiene":
 				HandleHygiene(ctx, session);
+				return;
+			case "/api/vm/snapshots":
+				HandleVmSnapshots(ctx, session);
 				return;			case "/api/users":
 				if (method == "GET")
 				{
@@ -482,6 +485,26 @@ public class ApiHandler
 			if (path == "/api/updates/install" && method == "POST")
 			{
 				HandleUpdateInstall(ctx, session);
+				return;
+			}
+			if (path == "/api/vm/power" && method == "POST")
+			{
+				HandleVmPower(ctx, session);
+				return;
+			}
+			if (path == "/api/vm/snapshot/create" && method == "POST")
+			{
+				HandleVmSnapshotCreate(ctx, session);
+				return;
+			}
+			if (path == "/api/vm/snapshot/apply" && method == "POST")
+			{
+				HandleVmSnapshotApply(ctx, session);
+				return;
+			}
+			if (path == "/api/vm/snapshot/delete" && method == "POST")
+			{
+				HandleVmSnapshotDelete(ctx, session);
 				return;
 			}
 			if (path == "/api/support/preview" && method == "GET")
@@ -2063,6 +2086,138 @@ public class ApiHandler
 		res["source"] = _settings.UpdatesSource;
 		res["repo"] = _settings.UpdatesGitHubRepo;
 		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// POST /api/vm/power — питание ВМ.
+	/// Тело: <c>{"name":"VM","action":"start|stop|shutdown|reboot|reset|pause|resume|save","force":false}</c>
+	/// </summary>
+	private void HandleVmPower(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав для управления ВМ"), 403);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		string action = Json.GetStr(body, "action", "").Trim();
+		bool force = Json.Bool(Json.Get(body, "force"), dflt: false);
+
+		if (name.Length == 0 || action.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "нужны name и action"), 400);
+			return;
+		}
+
+		VmControl.Result r = VmControl.SetPower(name, action, force);
+		_audit.Write(si.User, "vm.power", name + " " + action + (force ? " force" : ""),
+			(r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
+
+		Dictionary<string, object> res = r.ToJson();
+		res["vm"] = name;
+		res["action"] = action;
+		WriteJson(ctx, res, r.Ok ? 200 : 400);
+	}
+
+	/// <summary>GET /api/vm/snapshots?name=VM — снимки конкретной ВМ.</summary>
+	private void HandleVmSnapshots(HttpListenerContext ctx, SessionInfo si)
+	{
+		string name = Query(ctx, "name").Trim();
+		if (name.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "не указано имя ВМ"), 400);
+			return;
+		}
+		List<VmControl.Snapshot> list = VmControl.ListSnapshots(name);
+		List<object> result = new List<object>();
+		foreach (VmControl.Snapshot s in list)
+		{
+			result.Add(s.ToJson());
+		}
+		Dictionary<string, object> res = Json.Obj();
+		res["vm"] = name;
+		res["snapshots"] = result;
+		res["count"] = result.Count;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>POST /api/vm/snapshot/create — сделать снимок.</summary>
+	private void HandleVmSnapshotCreate(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		string snapName = Json.GetStr(body, "snapshotName", "").Trim();
+		if (name.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "не указано имя ВМ"), 400);
+			return;
+		}
+
+		VmControl.Result r = VmControl.CreateSnapshot(name, snapName);
+		_audit.Write(si.User, "vm.snapshot.create", name,
+			(snapName.Length > 0 ? snapName + ": " : "") + (r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
+		Dictionary<string, object> res = r.ToJson();
+		res["vm"] = name;
+		WriteJson(ctx, res, r.Ok ? 200 : 400);
+	}
+
+	/// <summary>
+	/// POST /api/vm/snapshot/apply — откатить ВМ к снимку.
+	/// Опасная операция: состояние машины станет как в момент снимка.
+	/// </summary>
+	private void HandleVmSnapshotApply(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		string snap = Json.GetStr(body, "snapshot", "").Trim();
+		if (name.Length == 0 || snap.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "нужны name и snapshot"), 400);
+			return;
+		}
+
+		VmControl.Result r = VmControl.ApplySnapshot(name, snap);
+		_audit.Write(si.User, "vm.snapshot.apply", name + " → " + snap,
+			(r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
+		Dictionary<string, object> res = r.ToJson();
+		res["vm"] = name;
+		WriteJson(ctx, res, r.Ok ? 200 : 400);
+	}
+
+	/// <summary>POST /api/vm/snapshot/delete — удалить снимок.</summary>
+	private void HandleVmSnapshotDelete(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		string snap = Json.GetStr(body, "snapshot", "").Trim();
+		if (name.Length == 0 || snap.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "нужны name и snapshot"), 400);
+			return;
+		}
+
+		VmControl.Result r = VmControl.DeleteSnapshot(name, snap);
+		_audit.Write(si.User, "vm.snapshot.delete", name + " / " + snap,
+			(r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
+		Dictionary<string, object> res = r.ToJson();
+		res["vm"] = name;
+		WriteJson(ctx, res, r.Ok ? 200 : 400);
 	}
 
 	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)	{
