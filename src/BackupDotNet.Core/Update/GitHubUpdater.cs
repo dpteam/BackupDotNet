@@ -466,7 +466,8 @@ public static class GitHubUpdater
 				case 401:
 					return "GitHub: нужен токен (401). Приватный репозиторий?";
 				case 403:
-					return "GitHub: доступ запрещён (403). Возможно, исчерпан лимит запросов — попробуйте позже.";
+					return "GitHub: доступ запрещён (403). Анонимный лимит — 60 запросов в час на IP; " +
+						"либо он исчерпан (подождите до сброса), либо нужен токен в updates.githubTokenSecret.";
 				case 404:
 					return "GitHub: репозиторий или релиз не найден (404). Проверьте updates.githubRepo.";
 				default:
