@@ -326,9 +326,88 @@ public static class VmCreator
 		}
 	}
 
-	/// <summary>Проверка параметров до любых действий.</summary>
-	private static string Validate(Spec spec)
+	/// <summary>
+	/// План создания: что именно будет сделано, без единого изменения на хосте.
+	/// Нужен для dry-run: «10 ГБ» на экране и 10 ГБ на диске — разные вещи,
+	/// а проверять это лучше до, а не после.
+	/// </summary>
+	public static Dictionary<string, object> Plan(Spec spec)
 	{
+		Dictionary<string, object> d = Json.Obj();
+		string error = Validate(spec);
+		if (error.Length > 0)
+		{
+			d["ok"] = false;
+			d["error"] = error;
+			return d;
+		}
+
+		string name = (spec.Name ?? "").Trim();
+		string diskPath = (spec.DiskPath ?? "").Trim();
+		if (diskPath.Length == 0)
+		{
+			diskPath = Path.Combine(DefaultDiskDirectory(), SafeFileName(name) + ".vhdx");
+		}
+
+		List<object> steps = new List<object>();
+		steps.Add("проверить, что машины «" + name + "» ещё нет");
+		steps.Add("создать динамический диск VHDX на " + spec.DiskGb + " ГБ: " + diskPath);
+		steps.Add("создать машину «" + name + "», поколение " + spec.Generation +
+			(spec.Generation == 2 ? " (UEFI)" : " (BIOS)"));
+		steps.Add("выделить " + spec.Cpu + " vCPU и " + spec.MemoryMb + " МБ памяти" +
+			(spec.DynamicMemory ? " (динамическая)" : " (фиксированная)"));
+		if (!string.IsNullOrWhiteSpace(spec.SwitchName))
+		{
+			steps.Add("подключить сеть к коммутатору «" + spec.SwitchName.Trim() + "»");
+		}
+		steps.Add("подключить диск к контроллеру SCSI");
+		if (!string.IsNullOrWhiteSpace(spec.IsoPath))
+		{
+			steps.Add("подключить ISO: " + spec.IsoPath.Trim());
+		}
+		if (spec.AutoStart)
+		{
+			steps.Add("включить автозапуск при старте хоста");
+		}
+		if (spec.Start)
+		{
+			steps.Add("запустить машину");
+		}
+
+		List<object> problems = new List<object>();
+		if (FindVmPath(name).Length > 0)
+		{
+			problems.Add("машина с именем «" + name + "» уже существует");
+		}
+		if (File.Exists(diskPath))
+		{
+			problems.Add("файл диска уже существует: " + diskPath);
+		}
+		if (!string.IsNullOrWhiteSpace(spec.SwitchName) && SwitchPath(spec.SwitchName.Trim()).Length == 0)
+		{
+			problems.Add("коммутатор «" + spec.SwitchName.Trim() + "» не найден");
+		}
+		if (!string.IsNullOrWhiteSpace(spec.IsoPath) && !File.Exists(spec.IsoPath.Trim()))
+		{
+			problems.Add("ISO не найден: " + spec.IsoPath.Trim());
+		}
+		string diskDir = Path.GetDirectoryName(diskPath);
+		if (!string.IsNullOrEmpty(diskDir) && !Directory.Exists(diskDir))
+		{
+			problems.Add("каталог для диска не существует: " + diskDir);
+		}
+
+		d["ok"] = problems.Count == 0;
+		d["vmName"] = name;
+		d["diskPath"] = diskPath;
+		d["steps"] = steps;
+		d["problems"] = problems;
+		d["dryRun"] = true;
+		return d;
+	}
+
+	/// <summary>Проверка параметров до любых действий.</summary>
+	private static string Validate(Spec spec)	{
 		if (spec == null)
 		{
 			return "не заданы параметры";

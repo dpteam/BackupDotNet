@@ -101,6 +101,10 @@ netsh http add urlacl url=http://+:8080/ user="NT AUTHORITY\SYSTEM"
 | `history.journalKeepDays` | `400` | сколько дней хранить подробный журнал прогонов |
 | `history.rollupKeepMonths` | `60` | сколько месяцев хранить суточные сводки |
 | `history.autoPrune` | `true` | чистить старое при запуске |
+| `vm.protectedPatterns` | `[]` | шаблоны имён ВМ, которые нельзя гасить и удалять без подтверждения (`*`, `?`): например `LH_*`, `DPT_*` |
+| `vm.maxBatchSize` | `5` | сколько машин можно обработать одной массовой операцией |
+| `vm.quarantineDays` | `7` | сколько дней машина лежит в карантине до окончательного удаления |
+| `vm.requireForceForProtected` | `true` | требовать подтверждение для защищённых ВМ |
 | `updates.enabled` | `false` | включить проверку обновлений |
 | `updates.source` | `local` | `local` (папка) или `github` (GitHub Releases) |
 | `updates.path` | — | каталог или сетевая папка с `latest.json` (для `local`) |

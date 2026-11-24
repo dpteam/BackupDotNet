@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -186,7 +186,11 @@ public class ApiHandler
 				return;
 			case "/api/vm/templates":
 				HandleVmTemplates(ctx, session);
-				return;			case "/api/users":
+				return;
+			case "/api/vm/quarantine":
+				HandleVmQuarantineList(ctx, session);
+				return;
+			case "/api/users":
 				if (method == "GET")
 				{
 					HandleUsersList(ctx, session);
@@ -526,6 +530,26 @@ public class ApiHandler
 			if (path == "/api/vm/templates/delete" && method == "POST")
 			{
 				HandleVmTemplateDelete(ctx, session);
+				return;
+			}
+			if (path == "/api/vm/batch" && method == "POST")
+			{
+				HandleVmBatch(ctx, session);
+				return;
+			}
+			if (path == "/api/vm/quarantine/move" && method == "POST")
+			{
+				HandleVmQuarantineMove(ctx, session);
+				return;
+			}
+			if (path == "/api/vm/quarantine/restore" && method == "POST")
+			{
+				HandleVmQuarantineRestore(ctx, session);
+				return;
+			}
+			if (path == "/api/vm/quarantine/purge" && method == "POST")
+			{
+				HandleVmQuarantinePurge(ctx, session);
 				return;
 			}
 			if (path == "/api/support/preview" && method == "GET")
@@ -1579,6 +1603,16 @@ public class ApiHandler
 		long memSum = 0L;
 		foreach (Dictionary<string, object> vm in vms)
 		{
+			// Признак защиты считаем на сервере: интерфейс не должен знать
+			// шаблоны имён, иначе правило легко разойдётся с настройками.
+			string vmName = Json.GetStr(vm, "name", "");
+			string pattern = VmGuard.MatchedPattern(_settings, vmName);
+			vm["protected"] = pattern.Length > 0;
+			if (pattern.Length > 0)
+			{
+				vm["protectedBy"] = pattern;
+			}
+
 			if (Json.Bool(Json.Get(vm, "running"), dflt: false))
 			{
 				running++;
@@ -1631,6 +1665,14 @@ public class ApiHandler
 		res["vms"] = vms;
 		res["totals"] = totals;
 		res["cachedAt"] = DateTime.Now;
+		// Правила защиты — интерфейсу, чтобы подсказывать до запроса,
+		// а не после отказа.
+		Dictionary<string, object> guard = Json.Obj();
+		guard["maxBatchSize"] = _settings.VmMaxBatchSize;
+		guard["protectedPatterns"] = _settings.VmProtectedPatterns;
+		guard["requireForce"] = _settings.VmRequireForceForProtected;
+		guard["quarantineDays"] = _settings.VmQuarantineDays;
+		res["guard"] = guard;
 		if (vmError.Length > 0)
 		{
 			res["error"] = vmError;
@@ -2124,10 +2166,25 @@ public class ApiHandler
 		string name = Json.GetStr(body, "name", "").Trim();
 		string action = Json.GetStr(body, "action", "").Trim();
 		bool force = Json.Bool(Json.Get(body, "force"), dflt: false);
+		// force — это «жёсткое выключение»; защиту снимает отдельный флаг.
+		bool confirmed = Json.Bool(Json.Get(body, "confirmProtected"), dflt: false);
 
 		if (name.Length == 0 || action.Length == 0)
 		{
 			WriteJson(ctx, Json.Obj("error", "нужны name и action"), 400);
+			return;
+		}
+
+		// Защищённую машину гасят только осознанно: после ввода её имени.
+		string blocked = VmGuard.Check(_settings, name, action, confirmed);
+		if (blocked.Length > 0)
+		{
+			_audit.Write(si.User, "vm.power", name + " " + action, "отказ: " + blocked + ", IP " + ClientIp(ctx));
+			Dictionary<string, object> deny = Json.Obj();
+			deny["ok"] = false;
+			deny["error"] = blocked;
+			deny["protected"] = true;
+			WriteJson(ctx, deny, 403);
 			return;
 		}
 
@@ -2205,6 +2262,18 @@ public class ApiHandler
 		if (name.Length == 0 || snap.Length == 0)
 		{
 			WriteJson(ctx, Json.Obj("error", "нужны name и snapshot"), 400);
+			return;
+		}
+
+		// Откат теряет всё, что случилось после снимка — для защищённой ВМ
+		// это требует явного подтверждения.
+		bool confirmed = Json.Bool(Json.Get(body, "confirmProtected"), dflt: false);
+		string blocked = VmGuard.Check(_settings, name, "snapshot.apply", confirmed);
+		if (blocked.Length > 0)
+		{
+			_audit.Write(si.User, "vm.snapshot.apply", name + " → " + snap,
+				"отказ: " + blocked + ", IP " + ClientIp(ctx));
+			WriteJson(ctx, Json.Obj("ok", false, "error", blocked, "protected", true), 403);
 			return;
 		}
 
@@ -2365,6 +2434,16 @@ public class ApiHandler
 			if (!HasField(body, "notes")) spec.Notes = fromTemplate.Notes;
 		}
 
+		// Dry-run: показать план и ничего не трогать.
+		if (Json.Bool(Json.Get(body, "dryRun"), dflt: false))
+		{
+			Dictionary<string, object> plan = VmCreator.Plan(spec);
+			plan["vmName"] = spec.Name;
+			_audit.Write(si.User, "vm.create.dryrun", spec.Name, "план, IP " + ClientIp(ctx));
+			WriteJson(ctx, plan, 200);
+			return;
+		}
+
 		VmCreator.Result r = VmCreator.Create(spec);
 		_audit.Write(si.User, "vm.create",
 			spec.Name + " (Gen" + spec.Generation + ", " + spec.Cpu + " vCPU, " +
@@ -2378,6 +2457,218 @@ public class ApiHandler
 	private static bool HasField(Dictionary<string, object> body, string name)
 	{
 		return body != null && body.ContainsKey(name) && body[name] != null;
+	}
+
+	/// <summary>
+	/// POST /api/vm/batch — одно действие для нескольких машин.
+	/// Тело: <c>{"action":"start","names":["A","B"],"force":false,"dryRun":false}</c>.
+	/// Ответ — построчно: что удалось, что нет и почему.
+	/// </summary>
+	private void HandleVmBatch(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав для управления ВМ"), 403);
+			return;
+		}
+
+		Dictionary<string, object> body = ReadJson(ctx);
+		string action = Json.GetStr(body, "action", "").Trim();
+		bool force = Json.Bool(Json.Get(body, "force"), dflt: false);
+		bool dryRun = Json.Bool(Json.Get(body, "dryRun"), dflt: false);
+
+		List<string> names = new List<string>();
+		foreach (object o in Json.AsArray(Json.Get(body, "names")))
+		{
+			string n = Json.Str(o, "").Trim();
+			if (n.Length > 0 && !names.Contains(n))
+			{
+				names.Add(n);
+			}
+		}
+
+		if (action.Length == 0 || names.Count == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "нужны action и список names"), 400);
+			return;
+		}
+		if (VmGuard.IsAdminOnly(action) && !Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "удаление и карантин доступны только администратору"), 403);
+			return;
+		}
+
+		bool confirmed = Json.Bool(Json.Get(body, "confirmProtected"), dflt: false);
+		string batchError = VmGuard.CheckBatch(_settings, names, action, confirmed);
+		if (batchError.Length > 0 && !dryRun)
+		{
+			_audit.Write(si.User, "vm.batch", action + " ×" + names.Count, "отказ: " + batchError + ", IP " + ClientIp(ctx));
+			Dictionary<string, object> deny = Json.Obj();
+			deny["ok"] = false;
+			deny["error"] = batchError;
+			deny["blocked"] = true;
+			WriteJson(ctx, deny, 403);
+			return;
+		}
+
+		List<object> results = new List<object>();
+		int ok = 0;
+		foreach (string name in names)
+		{
+			Dictionary<string, object> one = Json.Obj();
+			one["name"] = name;
+
+			string blocked = VmGuard.Check(_settings, name, action, confirmed);
+			if (blocked.Length > 0)
+			{
+				one["ok"] = false;
+				one["error"] = blocked;
+				one["skipped"] = true;
+				results.Add(one);
+				continue;
+			}
+
+			if (dryRun)
+			{
+				one["ok"] = true;
+				one["dryRun"] = true;
+				one["would"] = VmGuard.ActionName(action);
+				ok++;
+				results.Add(one);
+				continue;
+			}
+
+			VmControl.Result r;
+			switch (action)
+			{
+			case "snapshot":
+				r = VmControl.CreateSnapshot(name, "");
+				break;
+			default:
+				r = VmControl.SetPower(name, action, force);
+				break;
+			}
+			one["ok"] = r.Ok;
+			one["message"] = r.Message;
+			if (r.Ok)
+			{
+				ok++;
+			}
+			else
+			{
+				one["error"] = r.Message;
+			}
+			results.Add(one);
+		}
+
+		_audit.Write(si.User, "vm.batch",
+			action + " ×" + names.Count + (force ? " force" : "") + (dryRun ? " dry-run" : ""),
+			ok + " из " + names.Count + " успешно, IP " + ClientIp(ctx));
+
+		VmInventory.Invalidate();
+
+		Dictionary<string, object> res = Json.Obj();
+		res["ok"] = ok == names.Count;
+		res["action"] = action;
+		res["total"] = names.Count;
+		res["succeeded"] = ok;
+		res["failed"] = names.Count - ok;
+		res["dryRun"] = dryRun;
+		res["results"] = results;
+		if (dryRun && batchError.Length > 0)
+		{
+			// В плане ограничение показываем как замечание, а не как отказ:
+			// человеку полезнее увидеть «не пройдёт, потому что…».
+			res["warning"] = batchError;
+		}
+		res["message"] = (dryRun ? "план: " : "") + VmGuard.ActionName(action) + " — " +
+			ok + " из " + names.Count;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>GET /api/vm/quarantine — машины в карантине.</summary>
+	private void HandleVmQuarantineList(HttpListenerContext ctx, SessionInfo si)
+	{
+		List<VmQuarantine.Item> list = VmQuarantine.List(_settings);
+		List<object> items = new List<object>();
+		foreach (VmQuarantine.Item item in list)
+		{
+			items.Add(item.ToJson());
+		}
+		Dictionary<string, object> res = Json.Obj();
+		res["items"] = items;
+		res["count"] = items.Count;
+		res["expired"] = VmQuarantine.ExpiredCount(_settings);
+		res["keepDays"] = _settings.VmQuarantineDays;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>POST /api/vm/quarantine/move — выключить и переименовать вместо удаления.</summary>
+	private void HandleVmQuarantineMove(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "карантин доступен только администратору"), 403);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		if (name.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "не указано имя машины"), 400);
+			return;
+		}
+
+		bool confirmed = Json.Bool(Json.Get(body, "confirmProtected"), dflt: false);
+		VmControl.Result r = VmQuarantine.Move(_settings, name, si.User, confirmed);
+		_audit.Write(si.User, "vm.quarantine.move", name + (confirmed ? " подтверждено" : ""),
+			(r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
+		WriteJson(ctx, r.ToJson(), r.Ok ? 200 : (r.Protected ? 403 : 400));
+	}
+
+	/// <summary>POST /api/vm/quarantine/restore — вернуть машину из карантина.</summary>
+	private void HandleVmQuarantineRestore(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "карантин доступен только администратору"), 403);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		if (name.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "не указано имя машины"), 400);
+			return;
+		}
+
+		VmControl.Result r = VmQuarantine.Restore(_settings, name);
+		_audit.Write(si.User, "vm.quarantine.restore", name,
+			(r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
+		WriteJson(ctx, r.ToJson(), r.Ok ? 200 : 400);
+	}
+
+	/// <summary>POST /api/vm/quarantine/purge — удалить навсегда вместе с дисками.</summary>
+	private void HandleVmQuarantinePurge(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "окончательное удаление доступно только администратору"), 403);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		if (name.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "не указано имя машины"), 400);
+			return;
+		}
+
+		bool confirmed = Json.Bool(Json.Get(body, "confirmProtected"), dflt: false);
+		VmControl.Result r = VmQuarantine.Purge(_settings, name, confirmed);
+		_audit.Write(si.User, "vm.quarantine.purge", name + (confirmed ? " подтверждено" : ""),
+			(r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
+		WriteJson(ctx, r.ToJson(), r.Ok ? 200 : (r.Protected ? 403 : 400));
 	}
 
 	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)	{

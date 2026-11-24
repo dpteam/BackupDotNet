@@ -174,6 +174,22 @@ public class Settings
 
 	public List<string> NotifyTelegramChats = new List<string>();
 
+	// Защита управления виртуальными машинами
+	/// <summary>
+	/// Шаблоны имён ВМ, которые нельзя гасить и удалять без явного force.
+	/// Поддерживается <c>*</c> и <c>?</c>: например <c>prod-*</c>.
+	/// </summary>
+	public List<string> VmProtectedPatterns = new List<string>();
+
+	/// <summary>Максимум машин в одной массовой операции.</summary>
+	public int VmMaxBatchSize = 5;
+
+	/// <summary>Сколько дней машина лежит в карантине до окончательного удаления.</summary>
+	public int VmQuarantineDays = 7;
+
+	/// <summary>Требовать force для действий над защищёнными ВМ.</summary>
+	public bool VmRequireForceForProtected = true;
+
 	public static Settings FromJson(Dictionary<string, object> root)
 	{
 		Settings s = new Settings();
@@ -243,6 +259,12 @@ public class Settings
 		Dictionary<string, object> bk = Json.AsObject(Json.Get(root, "backup"));
 		s.BackupDestination = Json.GetStr(bk, "destination", s.BackupDestination);
 		s.BackupRetention = RetentionPolicy.FromJson(Json.AsObject(Json.Get(bk, "retention")));
+
+		Dictionary<string, object> vm = Json.AsObject(Json.Get(root, "vm"));
+		s.VmProtectedPatterns = ReadStringList(Json.Get(vm, "protectedPatterns"));
+		s.VmMaxBatchSize = Json.Int(Json.Get(vm, "maxBatchSize"), s.VmMaxBatchSize);
+		s.VmQuarantineDays = Json.Int(Json.Get(vm, "quarantineDays"), s.VmQuarantineDays);
+		s.VmRequireForceForProtected = Json.Bool(Json.Get(vm, "requireForceForProtected"), s.VmRequireForceForProtected);
 
 		Dictionary<string, object> nt = Json.AsObject(Json.Get(root, "notifications"));
 		s.NotifyEnabled = Json.Bool(Json.Get(nt, "enabled"), s.NotifyEnabled);

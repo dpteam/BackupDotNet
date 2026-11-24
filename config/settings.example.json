@@ -65,6 +65,12 @@
       "maxDeletePerRun": 10
     }
   },
+  "vm": {
+    "protectedPatterns": ["LH_*", "DPT_*"],
+    "maxBatchSize": 5,
+    "quarantineDays": 7,
+    "requireForceForProtected": true
+  },
   "updates": {
     "enabled": false,
     "source": "local",

@@ -55,6 +55,9 @@ public static class VmControl
 		/// <summary>Операция опасная — интерфейс должен требовать подтверждение.</summary>
 		public bool Destructive;
 
+		/// <summary>Отказ по защите ВМ: нужно явное подтверждение.</summary>
+		public bool Protected;
+
 		public Dictionary<string, object> ToJson()
 		{
 			Dictionary<string, object> d = Json.Obj();
@@ -68,6 +71,10 @@ public static class VmControl
 			}
 			d["detail"] = Detail;
 			d["destructive"] = Destructive;
+			if (Protected)
+			{
+				d["protected"] = true;
+			}
 			return d;
 		}
 	}
@@ -241,9 +248,19 @@ public static class VmControl
 				// Дожидаемся фактического состояния: ответ «выполнено» при ВМ,
 				// которая ещё в переходе, вводит в заблуждение.
 				ushort target = TargetState(requested);
-				if (r.Ok && target != 0 && WaitEnabledState(vmName, target, 60))
+				if (r.Ok && target != 0)
 				{
-					r.Message = human + " выполнено: " + HyperVExportEngine.StateName(target);
+					if (WaitEnabledState(vmName, target, 60))
+					{
+						r.Message = human + " выполнено: " + HyperVExportEngine.StateName(target);
+					}
+					else
+					{
+						// Не подтвердилось за минуту — честно говорим об этом,
+						// а не выдаём «выполнено» за факт.
+						r.Message = human + " отправлено, но состояние «" +
+							HyperVExportEngine.StateName(target) + "» не подтвердилось за минуту";
+					}
 				}
 				Log.Info("ВМ " + vmName + ": " + human + " (код " + code + ")");
 				return r;

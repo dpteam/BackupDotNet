@@ -1,4 +1,4 @@
-/* ==========================================================================
+﻿/* ==========================================================================
    Мониторинг бэкапов — веб-интерфейс
    Без фреймворков. Хеш-роутинг, fetch, ES5.
    Бренд берётся из /api/branding (config/branding.json).
@@ -122,7 +122,12 @@
         try { data = t ? JSON.parse(t) : null; } catch (e) { data = null; }
         if (!r.ok) {
           var msg = (data && data.error) ? data.error : ('HTTP ' + r.status);
-          throw new Error(msg);
+          var err = new Error(msg);
+          // Ответ сервера нужен вызывающему коду: например, чтобы отличить
+          // «защищённая машина» и предложить подтверждение.
+          err.data = data;
+          err.status = r.status;
+          throw err;
         }
         return data;
       });
@@ -4185,7 +4190,7 @@
 
   // ------------------------------------------------------------------ инвентарь ВМ
 
-  var invState = { filter: '', sort: 'name', dir: 1, data: null };
+  var invState = { filter: '', sort: 'name', dir: 1, data: null, selected: {} };
   var vmCreateState = { switches: [], templates: [], diskDirectory: '', error: '' };
 
   function fmtUptimeShort(hours) {
@@ -4295,9 +4300,17 @@
       '<div class="muted"><i class="fas fa-spinner fa-spin"></i> осматриваю диски и снимки — это занимает несколько секунд…' +
       '</div></div></div>';
 
+    // --- карантин: удаление в два шага, чтобы «ой, не ту» не стоило машины
+    html += '<div class="card"><div class="card-head"><i class="fas fa-box-archive"></i> Карантин' +
+      '<span class="spacer"></span>' +
+      '<span class="muted" style="font-size:11px" id="quar-summary"></span>' +
+      '</div><div class="card-body" id="quar-box">' +
+      '<div class="muted"><i class="fas fa-spinner fa-spin"></i> загружаю…</div></div></div>';
+
     view.innerHTML = html;
 
     loadHygiene();
+    loadQuarantine();
 
     var createBtn = document.getElementById('inv-create');
     if (createBtn) {
@@ -4353,7 +4366,26 @@
       return;
     }
 
-    var html = '<table class="journal-table"><thead><tr>' +
+    var selectedCount = Object.keys(invState.selected).filter(function (k) {
+      return invState.selected[k];
+    }).length;
+
+    var html = '<div class="vm-bulk">' +
+      '<label class="chk"><input type="checkbox" id="vm-select-all"> выбрать все</label>' +
+      '<span class="spacer"></span>' +
+      '<span class="muted" id="vm-bulk-count" style="font-size:11.5px">' +
+      (selectedCount ? 'выбрано: ' + selectedCount : 'ничего не выбрано') + '</span>' +
+      (canWrite()
+        ? ' <button class="btn btn-sm" data-bulk="start"><i class="fas fa-play"></i> Запустить</button>' +
+          ' <button class="btn btn-sm" data-bulk="shutdown"><i class="fas fa-power-off"></i> Выключить</button>' +
+          ' <button class="btn btn-sm" data-bulk="snapshot"><i class="fas fa-camera"></i> Снимок</button>' +
+          ' <button class="btn btn-sm" data-bulk="plan" title="Показать, что будет сделано">' +
+          '<i class="fas fa-list-check"></i> План</button>'
+        : '') +
+      '</div>';
+
+    html += '<table class="journal-table"><thead><tr>' +
+      '<th style="width:1%"></th>' +
       '<th>ВМ</th><th>Состояние</th><th>vCPU</th><th>Память</th>' +
       '<th>Диски</th><th>Снимки</th><th>IP</th><th>Аптайм</th><th style="width:1%"></th>' +
       '</tr></thead><tbody>';
@@ -4377,8 +4409,15 @@
         ? '<span style="color:var(--warn)">' + v.checkpoints + '</span>'
         : '<span class="muted">0</span>';
 
-      html += '<tr>' +
-        '<td><strong>' + esc(v.name) + '</strong>' +
+      var isSel = !!invState.selected[v.name];
+      var lock = v.protected
+        ? ' <i class="fas fa-lock" style="color:var(--warn);font-size:10.5px" title="защищена шаблоном: ' +
+          esc(v.protectedBy || '') + '"></i>'
+        : '';
+
+      html += '<tr' + (isSel ? ' class="vm-row-selected"' : '') + '>' +
+        '<td><input type="checkbox" data-vm-select="' + esc(v.name) + '"' + (isSel ? ' checked' : '') + '></td>' +
+        '<td><strong>' + esc(v.name) + '</strong>' + lock +
           '<div class="muted" style="font-size:10.5px">Gen' + (v.generation || '?') +
           (v.heartbeat ? ' · ' + esc(v.heartbeat) : '') + '</div></td>' +
         '<td>' + badge + '</td>' +
@@ -4395,6 +4434,29 @@
     html += '</tbody></table>';
     box.innerHTML = html;
 
+    box.querySelectorAll('[data-vm-select]').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        invState.selected[this.getAttribute('data-vm-select')] = this.checked;
+        drawVmList();
+      });
+    });
+
+    var all = document.getElementById('vm-select-all');
+    if (all) {
+      all.checked = vms.length > 0 && vms.every(function (v) { return invState.selected[v.name]; });
+      all.addEventListener('change', function () {
+        var on = this.checked;
+        vms.forEach(function (v) { invState.selected[v.name] = on; });
+        drawVmList();
+      });
+    }
+
+    box.querySelectorAll('[data-bulk]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        runVmBatch(this.getAttribute('data-bulk'), this);
+      });
+    });
+
     box.querySelectorAll('[data-vm-act]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         vmPower(this.getAttribute('data-vm'), this.getAttribute('data-vm-act'),
@@ -4407,6 +4469,121 @@
         showVmSnapshots(this.getAttribute('data-vm-snap'));
       });
     });
+
+    box.querySelectorAll('[data-vm-quar]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        vmQuarantine(this.getAttribute('data-vm-quar'));
+      });
+    });
+  }
+
+  /** Выбранные в таблице машины. */
+  function selectedVmNames() {
+    return Object.keys(invState.selected).filter(function (k) {
+      return invState.selected[k];
+    });
+  }
+
+  /**
+   * Массовое действие над выбранными машинами.
+   * «plan» — это dry-run: сервер отвечает, что сделал бы, и ничего не делает.
+   */
+  function runVmBatch(action, btn) {
+    var names = selectedVmNames();
+    if (!names.length) {
+      toast('Сначала выберите машины в таблице', 'error');
+      return;
+    }
+
+    var dryRun = action === 'plan';
+    var realAction = dryRun ? 'shutdown' : action;
+    var label = dryRun ? 'проверить план' : (action === 'snapshot' ? 'снять снимок' : VmActionLabel(action));
+    var risky = !dryRun && (action === 'shutdown' || action === 'stop' || action === 'reset');
+
+    if (risky && !window.confirm('Выполнить «' + label + '» для ' + names.length + ' машин?\n' +
+        names.slice(0, 8).join(', ') + (names.length > 8 ? ' и ещё ' + (names.length - 8) : ''))) {
+      return;
+    }
+
+    var old = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    }
+
+    api('/api/vm/batch', { method: 'POST', body: {
+      action: realAction,
+      names: names,
+      dryRun: dryRun
+    } }).then(function (r) {
+      if (dryRun) {
+        showBatchPlan(r);
+      } else {
+        var msg = r.message || 'готово';
+        if (r.failed > 0) {
+          var fails = (r.results || []).filter(function (x) { return !x.ok; });
+          msg += '. Не удалось: ' + fails.map(function (f) {
+            return f.name + ' — ' + (f.error || '?');
+          }).join('; ');
+        }
+        toast(msg, r.failed > 0 ? 'error' : 'ok');
+        invState.selected = {};
+        refreshInventorySilently();
+      }
+    }).catch(function (err) {
+      toast('Ошибка: ' + err.message, 'error');
+    }).then(function () {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = old;
+      }
+    });
+  }
+
+  function VmActionLabel(action) {
+    switch (action) {
+    case 'start': return 'запустить';
+    case 'shutdown': return 'выключить';
+    case 'stop': return 'жёстко выключить';
+    case 'pause': return 'поставить на паузу';
+    case 'resume': return 'возобновить';
+    case 'snapshot': return 'снять снимок';
+    default: return action;
+    }
+  }
+
+  /** Показывает план массовой операции в модальном окне. */
+  function showBatchPlan(r) {
+    var rows = (r.results || []).map(function (x) {
+      return '<tr><td>' + esc(x.name) + '</td>' +
+        '<td>' + (x.ok
+          ? '<span class="badge s-OK">будет: ' + esc(x.would || '') + '</span>'
+          : '<span class="badge s-FAIL">пропуск</span>') + '</td>' +
+        '<td class="muted" style="font-size:11.5px">' + esc(x.error || '') + '</td></tr>';
+    }).join('');
+
+    var div = document.createElement('div');
+    div.innerHTML = '<div class="modal-backdrop" id="vm-plan-modal"><div class="modal modal-wide">' +
+      '<h3><i class="fas fa-list-check"></i> План: ' + esc(VmGuardLabel(r.action)) + '</h3>' +
+      '<p class="muted" style="font-size:11.5px;margin-top:0">' +
+      'Ничего не выполнено. Это проверка: что будет сделано и где возникнут проблемы.</p>' +
+      (r.warning ? '<p style="color:var(--warn);font-size:11.5px"><i class="fas fa-exclamation-triangle"></i> ' +
+        esc(r.warning) + '</p>' : '') +
+      '<table class="cfg-table"><thead><tr><th>Машина</th><th>Действие</th><th>Замечание</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>' +
+      '<div class="modal-actions" style="margin-top:14px">' +
+      '<button class="btn" id="vm-plan-close">Закрыть</button>' +
+      '</div></div></div>';
+    document.body.appendChild(div.firstChild);
+
+    document.getElementById('vm-plan-close').addEventListener('click', function () {
+      var m = document.getElementById('vm-plan-modal');
+      if (m) m.parentNode.removeChild(m);
+    });
+  }
+
+  function VmGuardLabel(action) {
+    return VmActionLabel(action);
   }
 
   /** Кнопки управления питанием и снимками для строки таблицы. */
@@ -4433,11 +4610,37 @@
 
     out.push('<button class="btn btn-sm" data-vm-snap="' + esc(v.name) + '" title="Снимки">' +
       '<i class="fas fa-camera"></i></button>');
+
+    // Карантин вместо удаления — только администратору: это шаг к потере машины.
+    if (isAdmin()) {
+      out.push('<button class="btn btn-sm btn-danger" data-vm-quar="' + esc(v.name) + '" ' +
+        'title="Выключить и убрать в карантин"><i class="fas fa-box-archive"></i></button>');
+    }
     return out.join(' ');
   }
 
+  /** Убирает машину в карантин после подтверждения вводом имени. */
+  function vmQuarantine(name) {
+    var typed = window.prompt('Машина «' + name + '» будет выключена и переименована в карантин.\n' +
+      'Окончательное удаление — отдельным шагом через несколько дней.\n\n' +
+      'Введите имя машины для подтверждения:', '');
+    if (typed === null) return;
+    if (String(typed).trim().toLowerCase() !== name.toLowerCase()) {
+      toast('Имя не совпало — действие отменено', 'error');
+      return;
+    }
+
+    api('/api/vm/quarantine/move', { method: 'POST', body: { name: name, confirmProtected: true } })
+      .then(function (r) {
+        toast(r.message || 'в карантине', r.ok ? 'ok' : 'error');
+        refreshInventorySilently();
+        loadQuarantine();
+      })
+      .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); });
+  }
+
   /** Питание ВМ: подтверждение для опасных действий, затем запрос. */
-  function vmPower(name, action, force, btn) {
+  function vmPower(name, action, force, btn, confirmed) {
     var labels = {
       start: 'запустить',
       shutdown: 'выполнить штатное выключение',
@@ -4449,7 +4652,9 @@
     };
     var risky = action === 'shutdown' || action === 'stop' || action === 'reset' ||
       action === 'reboot' || action === 'save';
-    if (risky && !window.confirm('ВМ «' + name + '»: ' + (labels[action] || action) + '?')) return;
+    // При повторном вызове после ввода имени подтверждение уже получено —
+    // второй раз спрашивать незачем.
+    if (risky && !confirmed && !window.confirm('ВМ «' + name + '»: ' + (labels[action] || action) + '?')) return;
 
     var old = btn ? btn.innerHTML : null;
     if (btn) {
@@ -4457,7 +4662,7 @@
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
     }
 
-    api('/api/vm/power', { method: 'POST', body: { name: name, action: action, force: !!force } })
+    api('/api/vm/power', { method: 'POST', body: { name: name, action: action, force: !!force, confirmProtected: !!confirmed } })
       .then(function (r) {
         toast(r.message || 'готово', r.ok ? 'ok' : 'error');
         // Полный опрос инвентаря занимает секунды (размеры дисков). Обновляем
@@ -4467,11 +4672,25 @@
         refreshInventorySilently();
       })
       .catch(function (err) {
-        toast('Ошибка: ' + err.message, 'error');
         if (btn) {
           btn.disabled = false;
           btn.innerHTML = old;
         }
+
+        // Защищённая машина: сервер отказал. Предлагаем подтвердить именем
+        // и повторяем с force — иначе защита превратилась бы в «нельзя никогда».
+        if (err.data && err.data.protected) {
+          var typed = window.prompt((err.message || '') + '\n\nВведите имя машины для подтверждения:', '');
+          if (typed === null) return;
+          if (String(typed).trim().toLowerCase() !== name.toLowerCase()) {
+            toast('Имя не совпало — действие отменено', 'error');
+            return;
+          }
+          vmPower(name, action, force, btn, true);
+          return;
+        }
+
+        toast('Ошибка: ' + err.message, 'error');
       });
   }
 
@@ -4521,6 +4740,8 @@
       '<div id="vm-create-body"><span class="muted"><i class="fas fa-spinner fa-spin"></i> читаю коммутаторы…</span></div>' +
       '<div class="modal-actions" style="margin-top:14px">' +
       '<button class="btn" id="vm-create-cancel">Отмена</button>' +
+      '<button class="btn" id="vm-create-plan" title="Показать, что будет сделано, ничего не меняя">' +
+      '<i class="fas fa-list-check"></i> План</button>' +
       '<button class="btn" id="vm-create-template" title="Сохранить текущие параметры как заготовку">' +
       '<i class="fas fa-bookmark"></i> В шаблон</button>' +
       '<button class="btn btn-primary" id="vm-create-ok"><i class="fas fa-check"></i> Создать</button>' +
@@ -4529,6 +4750,7 @@
 
     document.getElementById('vm-create-cancel').addEventListener('click', closeVmCreate);
     document.getElementById('vm-create-ok').addEventListener('click', submitVmCreate);
+    document.getElementById('vm-create-plan').addEventListener('click', showVmCreatePlan);
     document.getElementById('vm-create-template').addEventListener('click', saveVmTemplate);
 
     // Коммутаторы и шаблоны приходят одним запросом каждый — параллельно.
@@ -4676,6 +4898,7 @@
     var el = document.getElementById('vm-create-status');
     if (!el) return;
     el.className = 'json-status' + (kind ? ' ' + kind : '');
+    el.style.whiteSpace = 'normal';
     el.textContent = text || '';
   }
 
@@ -4705,8 +4928,44 @@
       });
   }
 
-  function saveVmTemplate() {
+  /** Dry-run: показать план создания, ничего не меняя на хосте. */
+  function showVmCreatePlan() {
     var payload = vmCreatePayload();
+    if (!payload.name) {
+      setVmCreateStatus('укажите имя машины', 'bad');
+      return;
+    }
+
+    var btn = document.getElementById('vm-create-plan');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Считаю…';
+    setVmCreateStatus('проверяю параметры…', '');
+
+    payload.dryRun = true;
+    api('/api/vm/create', { method: 'POST', body: payload })
+      .then(function (p) {
+        var lines = (p.steps || []).map(function (s, i) { return (i + 1) + '. ' + s; });
+        var text = lines.join('\n');
+        if ((p.problems || []).length) {
+          text += '\n\nПроблемы:\n' + p.problems.map(function (x) { return '— ' + x; }).join('\n');
+        }
+        var st = document.getElementById('vm-create-status');
+        if (st) {
+          st.className = 'json-status ' + ((p.problems || []).length ? 'bad' : 'good');
+          st.textContent = text;
+          st.style.whiteSpace = 'pre-wrap';
+        }
+      })
+      .catch(function (err) {
+        setVmCreateStatus('Ошибка: ' + err.message, 'bad');
+      })
+      .then(function () {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-list-check"></i> План';
+      });
+  }
+
+  function saveVmTemplate() {    var payload = vmCreatePayload();
     var name = window.prompt('Название шаблона:', payload.template || '');
     if (name === null) return;
     name = String(name).trim();
@@ -4737,7 +4996,8 @@
   }
 
   /** Тихое обновление инвентаря без перерисовки всей страницы. */
-  function refreshInventorySilently() {    api('/api/inventory?refresh=1').then(function (d) {
+  function refreshInventorySilently() {
+    api('/api/inventory?refresh=1').then(function (d) {
       invState.data = d;
       drawVmList();
     }).catch(function () { });
@@ -4859,6 +5119,100 @@
       refreshInventorySilently();
     }).catch(function (err) {
       toast('Ошибка: ' + err.message, 'error');
+    });
+  }
+
+  /** Карантин: что лежит, сколько осталось, вернуть или удалить. */
+  function loadQuarantine() {
+    var box = document.getElementById('quar-box');
+    if (!box) return;
+
+    api('/api/vm/quarantine').then(function (q) {
+      var items = q.items || [];
+      var summary = document.getElementById('quar-summary');
+      if (summary) {
+        summary.textContent = items.length
+          ? 'машин: ' + items.length + (q.expired ? ', просрочено: ' + q.expired : '')
+          : 'пусто';
+      }
+
+      if (!items.length) {
+        box.innerHTML = '<div class="hyg-ok"><i class="fas fa-check-circle"></i> ' +
+          'В карантине пусто. Сюда попадают машины вместо безвозвратного удаления.</div>';
+        return;
+      }
+
+      var html = '<p class="muted" style="font-size:11.5px;margin:0 0 8px">' +
+        'Машина выключена и переименована. Диски на месте, вернуть можно в любой момент. ' +
+        'Через ' + (q.keepDays || 7) + ' дн. её можно удалить окончательно.</p>';
+
+      html += '<table class="cfg-table"><thead><tr>' +
+        '<th>Было</th><th>Сейчас</th><th>В карантине с</th><th>Осталось</th><th>Диски</th>' +
+        (isAdmin() ? '<th style="width:1%"></th>' : '') +
+        '</tr></thead><tbody>';
+
+      items.forEach(function (it) {
+        var left = it.daysLeft > 0
+          ? it.daysLeft + ' дн.'
+          : '<span style="color:var(--warn)">просрочено</span>';
+        html += '<tr>' +
+          '<td><strong>' + esc(it.originalName) + '</strong>' +
+            (it.by ? '<div class="muted" style="font-size:10.5px">убрал: ' + esc(it.by) + '</div>' : '') + '</td>' +
+          '<td class="muted" style="font-size:11px">' + esc(it.quarantineName) + '</td>' +
+          '<td class="muted" style="font-size:11.5px;white-space:nowrap">' + esc(fmtDateTime(it.since)) + '</td>' +
+          '<td style="white-space:nowrap">' + left + '</td>' +
+          '<td class="muted" style="font-size:11px">' + (it.disks || []).length + '</td>' +
+          (isAdmin()
+            ? '<td style="white-space:nowrap">' +
+              '<button class="btn btn-sm" data-quar-restore="' + esc(it.quarantineName) + '" title="Вернуть">' +
+              '<i class="fas fa-rotate-left"></i></button> ' +
+              '<button class="btn btn-sm btn-danger" data-quar-purge="' + esc(it.quarantineName) + '" ' +
+              'title="Удалить навсегда вместе с дисками"><i class="fas fa-trash"></i></button></td>'
+            : '') +
+          '</tr>';
+      });
+
+      html += '</tbody></table>';
+      box.innerHTML = html;
+
+      box.querySelectorAll('[data-quar-restore]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var name = this.getAttribute('data-quar-restore');
+          api('/api/vm/quarantine/restore', { method: 'POST', body: { name: name } })
+            .then(function (r) {
+              toast(r.message || 'возвращена', r.ok ? 'ok' : 'error');
+              loadQuarantine();
+              refreshInventorySilently();
+            })
+            .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); });
+        });
+      });
+
+      box.querySelectorAll('[data-quar-purge]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var name = this.getAttribute('data-quar-purge');
+          var item = items.filter(function (x) { return x.quarantineName === name; })[0];
+          var original = item ? item.originalName : name;
+
+          var typed = window.prompt('Удалить «' + original + '» навсегда вместе с дисками?\n' +
+            'Восстановить будет нельзя.\n\nВведите имя машины для подтверждения:', '');
+          if (typed === null) return;
+          if (String(typed).trim().toLowerCase() !== String(original).toLowerCase()) {
+            toast('Имя не совпало — удаление отменено', 'error');
+            return;
+          }
+
+          api('/api/vm/quarantine/purge', { method: 'POST', body: { name: name, confirmProtected: true } })
+            .then(function (r) {
+              toast(r.message || 'удалено', r.ok ? 'ok' : 'error');
+              loadQuarantine();
+              refreshInventorySilently();
+            })
+            .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); });
+        });
+      });
+    }).catch(function (err) {
+      box.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
     });
   }
 
@@ -7523,6 +7877,11 @@
 
   function canDelete() {
     return !!(state.me && state.me.canDeleteCompanies);
+  }
+
+  /** Администратор: только ему доступны удаление и карантин ВМ. */
+  function isAdmin() {
+    return !!(state.me && state.me.canManageUsers);
   }
 
   loadBranding().then(function () {

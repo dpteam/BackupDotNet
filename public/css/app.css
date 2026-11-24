@@ -1082,6 +1082,21 @@ td.cell-click:active span { transform: scale(1.02); }
 
 .vm-checks .chk { margin-top: 0; }
 
+/* Панель массовых действий над выбранными ВМ. */
+.vm-bulk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--surface-alt);
+}
+
+.vm-bulk .chk { margin-top: 0; }
+
+.vm-row-selected { background: var(--brand-soft, rgba(0,136,255,.08)); }
+
 .vm-table td { vertical-align: middle; }
 
 .vm-disk {
