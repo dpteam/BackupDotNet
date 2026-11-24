@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using BackupDotNet.Core.Inventory;
 
 namespace BackupDotNet.Core;
 
@@ -147,6 +148,9 @@ public class Scheduler
 				FlushZabbixQueue();
 				FlushNotifyQueue();
 				SendHeartbeatIfNeeded();
+				// Одна точка в день на диск — отсюда берётся прогноз заполнения.
+				// Внутри дешёвая проверка «за сегодня уже писали?».
+				SpaceTrend.RecordIfDue(_settings);
 			}
 			catch (Exception ex)
 			{

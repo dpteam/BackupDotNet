@@ -3200,7 +3200,7 @@
     api('/api/logs').then(function (data) {
       var files = data.files || [];
       if (!files.length) {
-        view.innerHTML = '<h2 class="page-title"><i class="fas fa-file-lines"></i> Журналы</h2>' +
+        view.innerHTML = '<h2 class="page-title"><i class="fas fa-file-alt"></i> Журналы</h2>' +
           '<div class="card"><div class="card-body muted">Журналы ещё не созданы. ' +
           'Каталог: <code>' + esc(data.dir) + '</code></div></div>';
         return;
@@ -3216,7 +3216,7 @@
           esc(f.name) + '  ·  ' + fmtSize(f.size) + '  ·  ' + fmtDateTime(f.modified) + '</option>';
       }).join('');
 
-      var html = '<h2 class="page-title"><i class="fas fa-file-lines"></i> Журналы</h2>';
+      var html = '<h2 class="page-title"><i class="fas fa-file-alt"></i> Журналы</h2>';
 
       html += '<div class="card"><div class="card-head"><i class="fas fa-terminal"></i> Журнал агента' +
         '<span class="spacer"></span>' +
@@ -3505,7 +3505,7 @@
       var engines = (data.engines || []).filter(function (e) { return e.available; });
       var all = data.engines || [];
 
-      var html = '<h2 class="page-title"><i class="fas fa-box-archive"></i> Бэкапы</h2>';
+      var html = '<h2 class="page-title"><i class="fas fa-archive"></i> Бэкапы</h2>';
 
       if (!engines.length) {
         html += '<div class="card"><div class="card-body">' +
@@ -3556,7 +3556,7 @@
       html += '</div></div>';
 
       // --- задания
-      html += '<div class="card"><div class="card-head"><i class="fas fa-list-check"></i> Задания' +
+      html += '<div class="card"><div class="card-head"><i class="fas fa-tasks"></i> Задания' +
         '<span class="spacer"></span>' +
         '<button class="btn btn-sm" id="bk-export"><i class="fas fa-file-csv"></i> CSV</button>' +
         '<span class="muted" style="font-size:11px" id="bk-count"></span>' +
@@ -3564,7 +3564,7 @@
         '<div style="padding:16px" class="muted">Загрузка…</div></div></div></div>';
 
       // --- хранение копий
-      html += '<div class="card"><div class="card-head"><i class="fas fa-clock-rotate-left"></i> Хранение копий' +
+      html += '<div class="card"><div class="card-head"><i class="fas fa-history"></i> Хранение копий' +
         '<span class="spacer"></span>' +
         '<button class="btn btn-sm" id="ret-export"><i class="fas fa-file-csv"></i> CSV</button>' +
         '<span class="muted" style="font-size:11px" id="ret-summary"></span>' +
@@ -4190,7 +4190,7 @@
 
   // ------------------------------------------------------------------ инвентарь ВМ
 
-  var invState = { filter: '', sort: 'name', dir: 1, data: null, selected: {} };
+  var invState = { filter: '', sort: 'name', dir: 1, data: null, selected: {}, forecast: [] };
   var vmCreateState = { switches: [], templates: [], diskDirectory: '', error: '' };
 
   function fmtUptimeShort(hours) {
@@ -4207,6 +4207,7 @@
 
     api('/api/inventory').then(function (data) {
       invState.data = data;
+      invState.forecast = data.spaceForecast || [];
       drawInventory();
     }).catch(function (err) {
       view.innerHTML = '<div class="card"><div class="card-body">Ошибка: ' + esc(err.message) + '</div></div>';
@@ -4273,14 +4274,36 @@
       '<div class="k">Память</div><div>' + Math.round((host.memoryTotalMb || 0) / 1024) + ' ГБ</div>' +
       '</div>' +
       '<div style="margin-top:10px"><div class="muted" style="font-size:11.5px;margin-bottom:6px">Диски</div>' +
-      '<table class="cfg-table"><thead><tr><th>Диск</th><th>Метка</th><th>Свободно</th><th style="width:160px"></th></tr></thead><tbody>';
+      '<table class="cfg-table"><thead><tr><th>Диск</th><th>Метка</th><th>Свободно</th>' +
+      '<th>Прогноз</th><th style="width:160px"></th></tr></thead><tbody>';
+
+    var forecasts = {};
+    (invState.forecast || []).forEach(function (f) { forecasts[f.name] = f; });
 
     (host.drives || []).forEach(function (d) {
       var pct = d.freePercent || 0;
-      var cls = pct < 5 ? 'fail' : (pct < 15 ? 'warn' : 'ok');
+      var f = forecasts[d.name] || null;
+      var cls = (f && f.warning) ? 'fail' : (pct < 5 ? 'fail' : (pct < 15 ? 'warn' : 'ok'));
+
+      var forecastText = '<span class="muted">—</span>';
+      if (f) {
+        if (f.daysToFull != null) {
+          forecastText = '<span style="color:var(--' + (f.warning ? 'fail' : 'ink-soft') + ')">' +
+            '~' + f.daysToFull + ' дн.</span>' +
+            '<div class="muted" style="font-size:10.5px">' + esc(f.trend) +
+            (f.perDayGb ? ', ' + f.perDayGb + ' ГБ/день' : '') + '</div>';
+        } else if (f.trend === 'мало данных') {
+          forecastText = '<span class="muted" style="font-size:10.5px" title="' + esc(f.note || '') + '">' +
+            'копим: ' + (f.samples || 0) + '/3</span>';
+        } else {
+          forecastText = '<span class="muted" style="font-size:10.5px">' + esc(f.trend) + '</span>';
+        }
+      }
+
       html += '<tr><td><code>' + esc(d.name) + '</code></td>' +
         '<td class="muted">' + esc(d.label || '—') + '</td>' +
         '<td>' + d.freeGb + ' из ' + d.totalGb + ' ГБ</td>' +
+        '<td style="white-space:nowrap">' + forecastText + '</td>' +
         '<td><div class="bar"><i style="width:' + Math.max(2, pct) + '%;background:var(--' + cls + ')"></i></div></td></tr>';
     });
 
@@ -4301,16 +4324,24 @@
       '</div></div></div>';
 
     // --- карантин: удаление в два шага, чтобы «ой, не ту» не стоило машины
-    html += '<div class="card"><div class="card-head"><i class="fas fa-box-archive"></i> Карантин' +
+    html += '<div class="card"><div class="card-head"><i class="fas fa-archive"></i> Карантин' +
       '<span class="spacer"></span>' +
       '<span class="muted" style="font-size:11px" id="quar-summary"></span>' +
       '</div><div class="card-body" id="quar-box">' +
+      '<div class="muted"><i class="fas fa-spinner fa-spin"></i> загружаю…</div></div></div>';
+
+    // --- отстойник сирот: те же правила, что и для ВМ
+    html += '<div class="card"><div class="card-head"><i class="fas fa-trash"></i> Отстойник файлов' +
+      '<span class="spacer"></span>' +
+      '<span class="muted" style="font-size:11px" id="orphan-summary"></span>' +
+      '</div><div class="card-body" id="orphan-box">' +
       '<div class="muted"><i class="fas fa-spinner fa-spin"></i> загружаю…</div></div></div>';
 
     view.innerHTML = html;
 
     loadHygiene();
     loadQuarantine();
+    loadOrphanTrash();
 
     var createBtn = document.getElementById('inv-create');
     if (createBtn) {
@@ -4380,7 +4411,7 @@
           ' <button class="btn btn-sm" data-bulk="shutdown"><i class="fas fa-power-off"></i> Выключить</button>' +
           ' <button class="btn btn-sm" data-bulk="snapshot"><i class="fas fa-camera"></i> Снимок</button>' +
           ' <button class="btn btn-sm" data-bulk="plan" title="Показать, что будет сделано">' +
-          '<i class="fas fa-list-check"></i> План</button>'
+          '<i class="fas fa-tasks"></i> План</button>'
         : '') +
       '</div>';
 
@@ -4564,7 +4595,7 @@
 
     var div = document.createElement('div');
     div.innerHTML = '<div class="modal-backdrop" id="vm-plan-modal"><div class="modal modal-wide">' +
-      '<h3><i class="fas fa-list-check"></i> План: ' + esc(VmGuardLabel(r.action)) + '</h3>' +
+      '<h3><i class="fas fa-tasks"></i> План: ' + esc(VmGuardLabel(r.action)) + '</h3>' +
       '<p class="muted" style="font-size:11.5px;margin-top:0">' +
       'Ничего не выполнено. Это проверка: что будет сделано и где возникнут проблемы.</p>' +
       (r.warning ? '<p style="color:var(--warn);font-size:11.5px"><i class="fas fa-exclamation-triangle"></i> ' +
@@ -4614,7 +4645,7 @@
     // Карантин вместо удаления — только администратору: это шаг к потере машины.
     if (isAdmin()) {
       out.push('<button class="btn btn-sm btn-danger" data-vm-quar="' + esc(v.name) + '" ' +
-        'title="Выключить и убрать в карантин"><i class="fas fa-box-archive"></i></button>');
+        'title="Выключить и убрать в карантин"><i class="fas fa-archive"></i></button>');
     }
     return out.join(' ');
   }
@@ -4741,7 +4772,7 @@
       '<div class="modal-actions" style="margin-top:14px">' +
       '<button class="btn" id="vm-create-cancel">Отмена</button>' +
       '<button class="btn" id="vm-create-plan" title="Показать, что будет сделано, ничего не меняя">' +
-      '<i class="fas fa-list-check"></i> План</button>' +
+      '<i class="fas fa-tasks"></i> План</button>' +
       '<button class="btn" id="vm-create-template" title="Сохранить текущие параметры как заготовку">' +
       '<i class="fas fa-bookmark"></i> В шаблон</button>' +
       '<button class="btn btn-primary" id="vm-create-ok"><i class="fas fa-check"></i> Создать</button>' +
@@ -4961,7 +4992,7 @@
       })
       .then(function () {
         btn.disabled = false;
-        btn.innerHTML = '<i class="fas fa-list-check"></i> План';
+        btn.innerHTML = '<i class="fas fa-tasks"></i> План';
       });
   }
 
@@ -5165,7 +5196,7 @@
           (isAdmin()
             ? '<td style="white-space:nowrap">' +
               '<button class="btn btn-sm" data-quar-restore="' + esc(it.quarantineName) + '" title="Вернуть">' +
-              '<i class="fas fa-rotate-left"></i></button> ' +
+              '<i class="fas fa-undo"></i></button> ' +
               '<button class="btn btn-sm btn-danger" data-quar-purge="' + esc(it.quarantineName) + '" ' +
               'title="Удалить навсегда вместе с дисками"><i class="fas fa-trash"></i></button></td>'
             : '') +
@@ -5223,7 +5254,8 @@
 
     api('/api/hygiene').then(function (h) {
       var summary = document.getElementById('hyg-summary');
-      var problems = (h.orphanCount || 0) + (h.snapshotCount || 0) + (h.stoppedCount || 0);
+      var problems = (h.orphanCount || 0) + (h.snapshotCount || 0) + (h.stoppedCount || 0) +
+        (h.staleCount || 0);
       if (summary) {
         summary.textContent = problems
           ? 'замечаний: ' + problems
@@ -5238,18 +5270,63 @@
 
       var html = '';
 
+      // Прогноз места: показываем только там, где он реально тревожный —
+      // иначе список превратится в шум.
+      var warnDrives = (h.spaceForecast || []).filter(function (f) { return f.warning; });
+      if (warnDrives.length) {
+        html += '<div class="hyg-group">' +
+          '<div class="hyg-title fail"><i class="fas fa-hdd"></i> Место кончается</div>' +
+          '<p class="muted" style="font-size:11.5px;margin:2px 0 6px">' +
+          'Прогноз по истории свободного места за последние недели.</p>' +
+          '<table class="cfg-table"><tbody>' +
+          warnDrives.map(function (f) {
+            return '<tr><td><code>' + esc(f.name) + '</code></td>' +
+              '<td style="white-space:nowrap">' + f.freeGb + ' из ' + f.totalGb + ' ГБ</td>' +
+              '<td style="white-space:nowrap">' + (f.daysToFull != null
+                ? '<span style="color:var(--fail)">~' + f.daysToFull + ' дн.</span>'
+                : '<span class="muted">не убывает</span>') + '</td>' +
+              '<td class="muted" style="font-size:11.5px">' + esc(f.note || '') + '</td></tr>';
+          }).join('') +
+          '</tbody></table></div>';
+      }
+
+      if (h.staleCount > 0) {
+        html += '<div class="hyg-group">' +
+          '<div class="hyg-title warn"><i class="fas fa-history"></i> Без свежей копии: ' +
+          h.staleCount + '</div>' +
+          '<p class="muted" style="font-size:11.5px;margin:2px 0 6px">' +
+          'Машины, у которых нет успешного бэкапа за ' + (h.staleDays || 30) + ' дней ' +
+          '(или не было ни разу). Бэкап мог делать кто-то другой — но проверить стоит.</p>' +
+          '<table class="cfg-table"><tbody>' +
+          (h.staleVms || []).map(function (v) {
+            return '<tr><td>' + esc(v.name) +
+              '<div class="muted" style="font-size:10.5px">' + esc(v.state || '') + '</div></td>' +
+              '<td class="muted" style="font-size:11.5px">' + esc(v.reason || '') + '</td>' +
+              '<td style="white-space:nowrap">' + fmtSize(v.diskBytes) + '</td></tr>';
+          }).join('') +
+          '</tbody></table></div>';
+      }
+
       if (h.orphanCount > 0) {
         html += '<div class="hyg-group">' +
-          '<div class="hyg-title fail"><i class="fas fa-hard-drive"></i> Диски-сироты: ' +
+          '<div class="hyg-title fail"><i class="fas fa-hdd"></i> Диски-сироты: ' +
           h.orphanCount + ' · ' + fmtSize(h.orphanBytes) + '</div>' +
           '<p class="muted" style="font-size:11.5px;margin:2px 0 6px">' +
-          'Файлы образов, не привязанные ни к одной ВМ. Обычно остаются после удаления машины.</p>' +
+          'Файлы образов, не привязанные ни к одной ВМ. Обычно остаются после удаления машины.' +
+          (isAdmin() ? ' Убрать можно в отстойник — оттуда файл возвращается одной кнопкой.' : '') +
+          '</p>' +
           '<table class="cfg-table"><tbody>' +
           (h.orphanDisks || []).map(function (d) {
             return '<tr><td><code>' + esc(d.fileName) + '</code>' +
               '<div class="muted" style="font-size:10.5px">' + esc(d.path) + '</div></td>' +
               '<td style="white-space:nowrap">' + fmtSize(d.sizeBytes) + '</td>' +
-              '<td class="muted" style="font-size:11px;white-space:nowrap">' + esc(fmtDate(d.modified)) + '</td></tr>';
+              '<td class="muted" style="font-size:11px;white-space:nowrap">' + esc(fmtDate(d.modified)) + '</td>' +
+              (isAdmin()
+                ? '<td style="white-space:nowrap"><button class="btn btn-sm btn-danger" ' +
+                  'data-orphan-move="' + esc(d.path) + '" title="Убрать в отстойник">' +
+                  '<i class="fas fa-archive"></i></button></td>'
+                : '') +
+              '</tr>';
           }).join('') +
           '</tbody></table></div>';
       }
@@ -5298,6 +5375,116 @@
         'Ничего не удаляется автоматически: удаление файлов — решение человека.</p>';
 
       box.innerHTML = html;
+
+      box.querySelectorAll('[data-orphan-move]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var path = this.getAttribute('data-orphan-move');
+          var name = String(path).split('\\').pop();
+          var typed = window.prompt('Файл «' + name + '» переедет в отстойник — оттуда его можно вернуть.\n\n' +
+            'Введите имя файла для подтверждения:', '');
+          if (typed === null) return;
+          if (String(typed).trim().toLowerCase() !== name.toLowerCase()) {
+            toast('Имя не совпало — действие отменено', 'error');
+            return;
+          }
+
+          api('/api/orphans/move', { method: 'POST', body: { path: path, confirmProtected: true } })
+            .then(function (r) {
+              toast(r.message || 'убрано', r.ok ? 'ok' : 'error');
+              loadHygiene();
+              loadOrphanTrash();
+            })
+            .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); });
+        });
+      });
+    }).catch(function (err) {
+      box.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
+    });
+  }
+
+  /** Отстойник сирот: что убрано, вернуть или удалить. */
+  function loadOrphanTrash() {
+    var box = document.getElementById('orphan-box');
+    if (!box) return;
+
+    api('/api/orphans').then(function (o) {
+      var items = o.items || [];
+      var summary = document.getElementById('orphan-summary');
+      if (summary) {
+        summary.textContent = items.length
+          ? 'файлов: ' + items.length + (o.expired ? ', просрочено: ' + o.expired : '')
+          : 'пусто';
+      }
+
+      if (!items.length) {
+        box.innerHTML = '<div class="hyg-ok"><i class="fas fa-check-circle"></i> ' +
+          'Отстойник пуст. Сюда попадают файлы-сироты вместо безвозвратного удаления.</div>';
+        return;
+      }
+
+      var html = '<p class="muted" style="font-size:11.5px;margin:0 0 8px">' +
+        'Файлы на месте, но вне рабочих каталогов. Вернуть можно в любой момент, ' +
+        'окончательное удаление — через ' + (o.keepDays || 7) + ' дн.</p>';
+
+      html += '<table class="cfg-table"><thead><tr>' +
+        '<th>Файл</th><th>Откуда</th><th>Размер</th><th>Осталось</th>' +
+        (isAdmin() ? '<th style="width:1%"></th>' : '') +
+        '</tr></thead><tbody>';
+
+      items.forEach(function (it) {
+        var left = it.daysLeft > 0
+          ? it.daysLeft + ' дн.'
+          : '<span style="color:var(--warn)">просрочено</span>';
+        html += '<tr>' +
+          '<td><code>' + esc(it.fileName) + '</code></td>' +
+          '<td class="muted" style="font-size:10.5px">' + esc(it.originalPath) + '</td>' +
+          '<td style="white-space:nowrap">' + fmtSize(it.sizeBytes) + '</td>' +
+          '<td style="white-space:nowrap">' + left + '</td>' +
+          (isAdmin()
+            ? '<td style="white-space:nowrap">' +
+              '<button class="btn btn-sm" data-orphan-restore="' + esc(it.fileName) + '" title="Вернуть">' +
+              '<i class="fas fa-undo"></i></button> ' +
+              '<button class="btn btn-sm btn-danger" data-orphan-purge="' + esc(it.fileName) + '" ' +
+              'title="Удалить навсегда"><i class="fas fa-trash"></i></button></td>'
+            : '') +
+          '</tr>';
+      });
+
+      html += '</tbody></table>';
+      box.innerHTML = html;
+
+      box.querySelectorAll('[data-orphan-restore]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var name = this.getAttribute('data-orphan-restore');
+          api('/api/orphans/restore', { method: 'POST', body: { name: name } })
+            .then(function (r) {
+              toast(r.message || 'возвращён', r.ok ? 'ok' : 'error');
+              loadOrphanTrash();
+              loadHygiene();
+            })
+            .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); });
+        });
+      });
+
+      box.querySelectorAll('[data-orphan-purge]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var name = this.getAttribute('data-orphan-purge');
+          var typed = window.prompt('Удалить «' + name + '» навсегда?\nВернуть будет нельзя.\n\n' +
+            'Введите имя файла для подтверждения:', '');
+          if (typed === null) return;
+          if (String(typed).trim().toLowerCase() !== String(name).toLowerCase()) {
+            toast('Имя не совпало — удаление отменено', 'error');
+            return;
+          }
+          api('/api/orphans/purge', { method: 'POST', body: { name: name, confirmProtected: true } })
+            .then(function (r) {
+              toast(r.message || 'удалено', r.ok ? 'ok' : 'error');
+              loadOrphanTrash();
+              loadHygiene();
+            })
+            .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); });
+        });
+      });
     }).catch(function (err) {
       box.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
     });
@@ -7065,7 +7252,7 @@
 
       // ------------------------------------------------ задания
       html += '<div class="card"><div class="card-head">' +
-        '<i class="fas fa-list-check"></i> Задания' +
+        '<i class="fas fa-tasks"></i> Задания' +
         '<span class="spacer"></span><span class="muted" style="font-size:11px" id="dp-jobs-count"></span>' +
         '</div><div id="deploy-jobs" class="card-body" style="padding:0"></div></div>';
 

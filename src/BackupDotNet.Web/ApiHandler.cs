@@ -190,6 +190,9 @@ public class ApiHandler
 			case "/api/vm/quarantine":
 				HandleVmQuarantineList(ctx, session);
 				return;
+			case "/api/orphans":
+				HandleOrphanList(ctx, session);
+				return;
 			case "/api/users":
 				if (method == "GET")
 				{
@@ -550,6 +553,21 @@ public class ApiHandler
 			if (path == "/api/vm/quarantine/purge" && method == "POST")
 			{
 				HandleVmQuarantinePurge(ctx, session);
+				return;
+			}
+			if (path == "/api/orphans/move" && method == "POST")
+			{
+				HandleOrphanMove(ctx, session);
+				return;
+			}
+			if (path == "/api/orphans/restore" && method == "POST")
+			{
+				HandleOrphanRestore(ctx, session);
+				return;
+			}
+			if (path == "/api/orphans/purge" && method == "POST")
+			{
+				HandleOrphanPurge(ctx, session);
 				return;
 			}
 			if (path == "/api/support/preview" && method == "GET")
@@ -1665,6 +1683,10 @@ public class ApiHandler
 		res["vms"] = vms;
 		res["totals"] = totals;
 		res["cachedAt"] = DateTime.Now;
+		// Прогноз заполнения дисков: считается по истории, копится по одной
+		// точке в день. Заодно фиксируем сегодняшнюю точку.
+		SpaceTrend.Record(_settings, host);
+		res["spaceForecast"] = SpaceTrend.Forecast(_settings);
 		// Правила защиты — интерфейсу, чтобы подсказывать до запроса,
 		// а не после отказа.
 		Dictionary<string, object> guard = Json.Obj();
@@ -1733,7 +1755,131 @@ public class ApiHandler
 		Dictionary<string, object> res = report.ToJson();
 		res["snapshotDays"] = snapshotDays;
 		res["stoppedDays"] = stoppedDays;
+
+		// Прогноз заполнения дисков: «осталось 12 ГБ» без срока ничего не значит.
+		int staleDays = Json.Int(Query(ctx, "staleDays"), 30);
+		res["spaceForecast"] = SpaceTrend.Forecast(_settings);
+
+		// Машины без свежей копии — отдельный список, а не «ошибка»:
+		// бэкапы мог делать кто-то другой, но знать об этом надо.
+		List<Dictionary<string, object>> vms = VmInventory.Vms(out string vmError, force: false);
+		Dictionary<string, DateTime> targets = LastBackupTargets();
+		List<VmStale.Item> stale = VmStale.Find(vms, targets, staleDays);
+		List<object> staleJson = new List<object>();
+		foreach (VmStale.Item item in stale)
+		{
+			staleJson.Add(item.ToJson());
+		}
+		res["staleVms"] = staleJson;
+		res["staleCount"] = staleJson.Count;
+		res["staleDays"] = staleDays;
+
 		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>GET /api/orphans — что лежит в отстойнике сирот.</summary>
+	private void HandleOrphanList(HttpListenerContext ctx, SessionInfo si)
+	{
+		List<OrphanTrash.Item> list = OrphanTrash.List(_settings);
+		List<object> items = new List<object>();
+		foreach (OrphanTrash.Item item in list)
+		{
+			items.Add(item.ToJson());
+		}
+		Dictionary<string, object> res = Json.Obj();
+		res["items"] = items;
+		res["count"] = items.Count;
+		res["expired"] = OrphanTrash.ExpiredCount(_settings);
+		res["keepDays"] = _settings.VmQuarantineDays;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>POST /api/orphans/move — убрать файл-сироту в отстойник.</summary>
+	private void HandleOrphanMove(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "уборка файлов доступна только администратору"), 403);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string path = Json.GetStr(body, "path", "").Trim();
+		bool confirmed = Json.Bool(Json.Get(body, "confirmProtected"), dflt: false);
+
+		VmControl.Result r = OrphanTrash.Move(_settings, path, si.User, confirmed);
+		_audit.Write(si.User, "orphan.move", path,
+			(r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
+		WriteJson(ctx, r.ToJson(), r.Ok ? 200 : (r.Protected ? 403 : 400));
+	}
+
+	/// <summary>POST /api/orphans/restore — вернуть файл на прежнее место.</summary>
+	private void HandleOrphanRestore(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "доступно только администратору"), 403);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		VmControl.Result r = OrphanTrash.Restore(_settings, name);
+		_audit.Write(si.User, "orphan.restore", name,
+			(r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
+		WriteJson(ctx, r.ToJson(), r.Ok ? 200 : 400);
+	}
+
+	/// <summary>POST /api/orphans/purge — удалить файл из отстойника навсегда.</summary>
+	private void HandleOrphanPurge(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "окончательное удаление доступно только администратору"), 403);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		bool confirmed = Json.Bool(Json.Get(body, "confirmProtected"), dflt: false);
+		VmControl.Result r = OrphanTrash.Purge(_settings, name, confirmed);
+		_audit.Write(si.User, "orphan.purge", name,
+			(r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
+		WriteJson(ctx, r.ToJson(), r.Ok ? 200 : (r.Protected ? 403 : 400));
+	}
+
+	/// <summary>
+	/// Цели успешных бэкапов и время последнего успеха. Берём только статус
+	/// «done»: неудачная попытка не значит, что копия есть.
+	/// </summary>
+	private Dictionary<string, DateTime> LastBackupTargets()	{
+		Dictionary<string, DateTime> map = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+		if (_backups == null)
+		{
+			return map;
+		}
+		try
+		{
+			foreach (BackupJob job in _backups.List())
+			{
+				if (!string.Equals(job.Status, "done", StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+				string target = (job.Target ?? "").Trim();
+				if (target.Length == 0)
+				{
+					continue;
+				}
+				DateTime when = job.FinishedAt ?? job.CreatedAt;
+				if (!map.ContainsKey(target) || map[target] < when)
+				{
+					map[target] = when;
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Warn("Последние бэкапы по ВМ: " + ex.Message);
+		}
+		return map;
 	}
 
 	/// <summary>
