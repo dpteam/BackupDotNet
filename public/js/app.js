@@ -4186,6 +4186,7 @@
   // ------------------------------------------------------------------ инвентарь ВМ
 
   var invState = { filter: '', sort: 'name', dir: 1, data: null };
+  var vmCreateState = { switches: [], templates: [], diskDirectory: '', error: '' };
 
   function fmtUptimeShort(hours) {
     var h = Number(hours);
@@ -4218,6 +4219,7 @@
 
     var html = '<h2 class="page-title"><i class="fas fa-server"></i> Инвентарь' +
       '<span class="spacer"></span>' +
+      (canWrite() ? '<button class="btn btn-sm btn-primary" id="inv-create"><i class="fas fa-plus"></i> Создать ВМ</button> ' : '') +
       '<button class="btn btn-sm" id="inv-export"><i class="fas fa-file-csv"></i> CSV</button>' +
       '<button class="btn btn-sm" id="inv-refresh"><i class="fas fa-sync-alt"></i> Обновить</button>' +
       '</h2>';
@@ -4296,6 +4298,11 @@
     view.innerHTML = html;
 
     loadHygiene();
+
+    var createBtn = document.getElementById('inv-create');
+    if (createBtn) {
+      createBtn.addEventListener('click', showVmCreateDialog);
+    }
 
     document.getElementById('inv-export').addEventListener('click', function () {
       window.location.href = '/api/export/csv?what=inventory';
@@ -4506,9 +4513,231 @@
     }
   }
 
+  /** Мастер создания ВМ: имя, ресурсы, сеть, диск. */
+  function showVmCreateDialog() {
+    var div = document.createElement('div');
+    div.innerHTML = '<div class="modal-backdrop" id="vm-create-modal"><div class="modal modal-wide">' +
+      '<h3><i class="fas fa-plus"></i> Новая виртуальная машина</h3>' +
+      '<div id="vm-create-body"><span class="muted"><i class="fas fa-spinner fa-spin"></i> читаю коммутаторы…</span></div>' +
+      '<div class="modal-actions" style="margin-top:14px">' +
+      '<button class="btn" id="vm-create-cancel">Отмена</button>' +
+      '<button class="btn" id="vm-create-template" title="Сохранить текущие параметры как заготовку">' +
+      '<i class="fas fa-bookmark"></i> В шаблон</button>' +
+      '<button class="btn btn-primary" id="vm-create-ok"><i class="fas fa-check"></i> Создать</button>' +
+      '</div></div></div>';
+    document.body.appendChild(div.firstChild);
+
+    document.getElementById('vm-create-cancel').addEventListener('click', closeVmCreate);
+    document.getElementById('vm-create-ok').addEventListener('click', submitVmCreate);
+    document.getElementById('vm-create-template').addEventListener('click', saveVmTemplate);
+
+    // Коммутаторы и шаблоны приходят одним запросом каждый — параллельно.
+    Promise.all([
+      api('/api/vm/switches').catch(function (e) { return { switches: [], error: e.message }; }),
+      api('/api/vm/templates').catch(function () { return { templates: [] }; })
+    ]).then(function (res) {
+      vmCreateState.switches = res[0].switches || [];
+      vmCreateState.templates = res[1].templates || [];
+      vmCreateState.diskDirectory = res[0].diskDirectory || '';
+      vmCreateState.error = res[0].error || '';
+      drawVmCreateForm();
+    });
+  }
+
+  function closeVmCreate() {
+    var m = document.getElementById('vm-create-modal');
+    if (m) m.parentNode.removeChild(m);
+  }
+
+  function drawVmCreateForm() {
+    var body = document.getElementById('vm-create-body');
+    if (!body) return;
+
+    var sw = vmCreateState.switches;
+    var tpl = vmCreateState.templates;
+
+    var html = '';
+
+    if (vmCreateState.error) {
+      html += '<p style="color:var(--warn);font-size:12px;margin-top:0">' +
+        '<i class="fas fa-exclamation-triangle"></i> ' + esc(vmCreateState.error) + '</p>';
+    }
+
+    html += '<div class="vm-form">';
+
+    if (tpl.length) {
+      html += '<label class="fld"><span>Шаблон</span><select id="vcf-template">' +
+        '<option value="">— без шаблона —</option>' +
+        tpl.map(function (t) {
+          return '<option value="' + esc(t.name) + '">' + esc(t.name) +
+            ' (Gen' + (t.generation || 2) + ', ' + (t.cpu || 2) + ' vCPU, ' +
+            fmtMemMb(t.memoryMb || 2048) + ')</option>';
+        }).join('') +
+        '</select></label>';
+    }
+
+    html += '<label class="fld"><span>Имя машины</span>' +
+      '<input type="text" id="vcf-name" placeholder="например, WEB-01" autocomplete="off"></label>';
+
+    html += '<label class="fld"><span>Поколение</span><select id="vcf-generation">' +
+      '<option value="2" selected>2 — UEFI (рекомендуется)</option>' +
+      '<option value="1">1 — BIOS (старые ОС)</option>' +
+      '</select></label>';
+
+    html += '<label class="fld"><span>Процессоров (vCPU)</span>' +
+      '<input type="number" id="vcf-cpu" value="2" min="1" max="256"></label>';
+
+    html += '<label class="fld"><span>Память, МБ</span>' +
+      '<input type="number" id="vcf-memory" value="2048" min="32" step="256"></label>';
+
+    html += '<label class="fld"><span>Диск, ГБ</span>' +
+      '<input type="number" id="vcf-disk" value="40" min="1" max="65536"></label>';
+
+    html += '<label class="fld"><span>Сеть</span><select id="vcf-switch">' +
+      '<option value="">— без сети —</option>' +
+      sw.map(function (s) {
+        return '<option value="' + esc(s) + '"' + (s === 'INT' ? ' selected' : '') + '>' + esc(s) + '</option>';
+      }).join('') +
+      '</select></label>';
+
+    html += '<label class="fld"><span>ISO (необязательно)</span>' +
+      '<input type="text" id="vcf-iso" placeholder="путь к образу .iso" autocomplete="off"></label>';
+
+    html += '</div>';
+
+    html += '<div class="vm-checks">' +
+      '<label class="chk"><input type="checkbox" id="vcf-dynamic"> Динамическая память</label>' +
+      '<label class="chk"><input type="checkbox" id="vcf-autostart" checked> Возобновлять при старте хоста</label>' +
+      '<label class="chk"><input type="checkbox" id="vcf-start"> Запустить сразу после создания</label>' +
+      '</div>';
+
+    html += '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' +
+      'Диск создаётся динамическим: файл занимает место по мере заполнения. ' +
+      (vmCreateState.diskDirectory
+        ? 'Каталог по умолчанию: <code>' + esc(vmCreateState.diskDirectory) + '</code>.'
+        : '') +
+      '</p>';
+
+    html += '<div id="vm-create-status" class="json-status"></div>';
+
+    body.innerHTML = html;
+
+    // Шаблон подставляет свои значения, но имя и диск остаются свободными.
+    var sel = document.getElementById('vcf-template');
+    if (sel) {
+      sel.addEventListener('change', function () {
+        var found = tpl.filter(function (t) { return t.name === this.value; }, this)[0];
+        if (!found) return;
+        document.getElementById('vcf-generation').value = String(found.generation || 2);
+        document.getElementById('vcf-cpu').value = found.cpu || 2;
+        document.getElementById('vcf-memory').value = found.memoryMb || 2048;
+        document.getElementById('vcf-disk').value = found.diskGb || 40;
+        document.getElementById('vcf-switch').value = found.switchName || '';
+        document.getElementById('vcf-dynamic').checked = !!found.dynamicMemory;
+        document.getElementById('vcf-autostart').checked = found.autoStart !== false;
+      });
+    }
+
+    var nameInput = document.getElementById('vcf-name');
+    if (nameInput) nameInput.focus();
+  }
+
+  /** Собирает значения формы в объект запроса. */
+  function vmCreatePayload() {
+    function val(id) {
+      var el = document.getElementById(id);
+      return el ? el.value : '';
+    }
+    function num(id, dflt) {
+      var n = parseInt(val(id), 10);
+      return isNaN(n) ? dflt : n;
+    }
+    function checked(id) {
+      var el = document.getElementById(id);
+      return el ? !!el.checked : false;
+    }
+
+    return {
+      name: String(val('vcf-name')).trim(),
+      generation: num('vcf-generation', 2),
+      cpu: num('vcf-cpu', 2),
+      memoryMb: num('vcf-memory', 2048),
+      diskGb: num('vcf-disk', 40),
+      switchName: val('vcf-switch'),
+      isoPath: String(val('vcf-iso')).trim(),
+      dynamicMemory: checked('vcf-dynamic'),
+      autoStart: checked('vcf-autostart'),
+      start: checked('vcf-start'),
+      template: val('vcf-template') || ''
+    };
+  }
+
+  function setVmCreateStatus(text, kind) {
+    var el = document.getElementById('vm-create-status');
+    if (!el) return;
+    el.className = 'json-status' + (kind ? ' ' + kind : '');
+    el.textContent = text || '';
+  }
+
+  function submitVmCreate() {
+    var payload = vmCreatePayload();
+    if (!payload.name) {
+      setVmCreateStatus('укажите имя машины', 'bad');
+      return;
+    }
+
+    var btn = document.getElementById('vm-create-ok');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Создаю…';
+    setVmCreateStatus('создаю диск и машину — это занимает несколько секунд…', '');
+
+    api('/api/vm/create', { method: 'POST', body: payload })
+      .then(function (r) {
+        var warn = (r.warnings || []).length ? ' Предупреждения: ' + r.warnings.join('; ') : '';
+        toast((r.message || 'машина создана') + warn, r.ok ? 'ok' : 'error');
+        closeVmCreate();
+        refreshInventorySilently();
+      })
+      .catch(function (err) {
+        setVmCreateStatus('Ошибка: ' + err.message, 'bad');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-check"></i> Создать';
+      });
+  }
+
+  function saveVmTemplate() {
+    var payload = vmCreatePayload();
+    var name = window.prompt('Название шаблона:', payload.template || '');
+    if (name === null) return;
+    name = String(name).trim();
+    if (!name) {
+      setVmCreateStatus('имя шаблона не может быть пустым', 'bad');
+      return;
+    }
+
+    api('/api/vm/templates/save', { method: 'POST', body: {
+      name: name,
+      generation: payload.generation,
+      cpu: payload.cpu,
+      memoryMb: payload.memoryMb,
+      diskGb: payload.diskGb,
+      switchName: payload.switchName,
+      dynamicMemory: payload.dynamicMemory,
+      autoStart: payload.autoStart
+    } }).then(function () {
+      toast('Шаблон сохранён: ' + name, 'ok');
+      setVmCreateStatus('шаблон «' + name + '» сохранён', 'good');
+      api('/api/vm/templates').then(function (r) {
+        vmCreateState.templates = r.templates || [];
+        drawVmCreateForm();
+      });
+    }).catch(function (err) {
+      setVmCreateStatus('Ошибка: ' + err.message, 'bad');
+    });
+  }
+
   /** Тихое обновление инвентаря без перерисовки всей страницы. */
-  function refreshInventorySilently() {
-    api('/api/inventory?refresh=1').then(function (d) {
+  function refreshInventorySilently() {    api('/api/inventory?refresh=1').then(function (d) {
       invState.data = d;
       drawVmList();
     }).catch(function () { });

@@ -180,6 +180,12 @@ public class ApiHandler
 				return;
 			case "/api/vm/snapshots":
 				HandleVmSnapshots(ctx, session);
+				return;
+			case "/api/vm/switches":
+				HandleVmSwitches(ctx, session);
+				return;
+			case "/api/vm/templates":
+				HandleVmTemplates(ctx, session);
 				return;			case "/api/users":
 				if (method == "GET")
 				{
@@ -505,6 +511,21 @@ public class ApiHandler
 			if (path == "/api/vm/snapshot/delete" && method == "POST")
 			{
 				HandleVmSnapshotDelete(ctx, session);
+				return;
+			}
+			if (path == "/api/vm/create" && method == "POST")
+			{
+				HandleVmCreate(ctx, session);
+				return;
+			}
+			if (path == "/api/vm/templates/save" && method == "POST")
+			{
+				HandleVmTemplateSave(ctx, session);
+				return;
+			}
+			if (path == "/api/vm/templates/delete" && method == "POST")
+			{
+				HandleVmTemplateDelete(ctx, session);
 				return;
 			}
 			if (path == "/api/support/preview" && method == "GET")
@@ -2218,6 +2239,145 @@ public class ApiHandler
 		Dictionary<string, object> res = r.ToJson();
 		res["vm"] = name;
 		WriteJson(ctx, res, r.Ok ? 200 : 400);
+	}
+
+	/// <summary>GET /api/vm/switches — виртуальные коммутаторы хоста.</summary>
+	private void HandleVmSwitches(HttpListenerContext ctx, SessionInfo si)
+	{
+		string error;
+		List<string> switches = VmCreator.Switches(out error);
+		Dictionary<string, object> res = Json.Obj();
+		res["switches"] = switches;
+		res["diskDirectory"] = VmCreator.DefaultDiskDirectory();
+		if (error.Length > 0)
+		{
+			res["error"] = error;
+		}
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>GET /api/vm/templates — сохранённые шаблоны конфигурации.</summary>
+	private void HandleVmTemplates(HttpListenerContext ctx, SessionInfo si)
+	{
+		List<Dictionary<string, object>> list = VmTemplates.List(_settings.DataDir);
+		List<object> items = new List<object>();
+		foreach (Dictionary<string, object> t in list)
+		{
+			items.Add(t);
+		}
+		Dictionary<string, object> res = Json.Obj();
+		res["templates"] = items;
+		res["count"] = items.Count;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>POST /api/vm/templates/save — сохранить конфигурацию как шаблон.</summary>
+	private void HandleVmTemplateSave(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		string error = VmTemplates.Save(_settings.DataDir, name, body);
+		if (error.Length > 0)
+		{
+			WriteJson(ctx, Json.Obj("error", error), 400);
+			return;
+		}
+		_audit.Write(si.User, "vm.template.save", name, "ok, IP " + ClientIp(ctx));
+		Dictionary<string, object> res = Json.Obj();
+		res["ok"] = true;
+		res["name"] = name;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>POST /api/vm/templates/delete — удалить шаблон.</summary>
+	private void HandleVmTemplateDelete(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		string error = VmTemplates.Delete(_settings.DataDir, name);
+		if (error.Length > 0)
+		{
+			WriteJson(ctx, Json.Obj("error", error), 400);
+			return;
+		}
+		_audit.Write(si.User, "vm.template.delete", name, "ok, IP " + ClientIp(ctx));
+		Dictionary<string, object> res = Json.Obj();
+		res["ok"] = true;
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// POST /api/vm/create — создать виртуальную машину.
+	/// Тело: имя, поколение, vCPU, память, размер диска, коммутатор, ISO, запуск.
+	/// </summary>
+	private void HandleVmCreate(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав для создания ВМ"), 403);
+			return;
+		}
+
+		Dictionary<string, object> body = ReadJson(ctx);
+		VmCreator.Spec spec = new VmCreator.Spec();
+		spec.Name = Json.GetStr(body, "name", "").Trim();
+		spec.Generation = Json.Int(Json.Get(body, "generation"), 2);
+		spec.Cpu = Json.Int(Json.Get(body, "cpu"), 2);
+		spec.MemoryMb = Json.Int(Json.Get(body, "memoryMb"), 2048);
+		spec.DynamicMemory = Json.Bool(Json.Get(body, "dynamicMemory"), dflt: false);
+		spec.MemoryMinMb = Json.Int(Json.Get(body, "memoryMinMb"), 0);
+		spec.MemoryMaxMb = Json.Int(Json.Get(body, "memoryMaxMb"), 0);
+		spec.DiskGb = Json.Int(Json.Get(body, "diskGb"), 40);
+		spec.DiskPath = Json.GetStr(body, "diskPath", "").Trim();
+		spec.SwitchName = Json.GetStr(body, "switchName", "").Trim();
+		spec.IsoPath = Json.GetStr(body, "isoPath", "").Trim();
+		spec.Start = Json.Bool(Json.Get(body, "start"), dflt: false);
+		spec.AutoStart = Json.Bool(Json.Get(body, "autoStart"), dflt: true);
+		spec.Notes = Json.GetStr(body, "notes", "").Trim();
+
+		// Шаблон, если выбран, заполняет умолчания. Явно переданные поля
+		// важнее: имя и размер диска почти всегда меняются.
+		string templateName = Json.GetStr(body, "template", "").Trim();
+		if (templateName.Length > 0)
+		{
+			Dictionary<string, object> template = VmTemplates.Get(_settings.DataDir, templateName);
+			VmCreator.Spec fromTemplate = new VmCreator.Spec();
+			VmTemplates.Apply(template, fromTemplate);
+			if (!HasField(body, "generation")) spec.Generation = fromTemplate.Generation;
+			if (!HasField(body, "cpu")) spec.Cpu = fromTemplate.Cpu;
+			if (!HasField(body, "memoryMb")) spec.MemoryMb = fromTemplate.MemoryMb;
+			if (!HasField(body, "dynamicMemory")) spec.DynamicMemory = fromTemplate.DynamicMemory;
+			if (!HasField(body, "memoryMinMb")) spec.MemoryMinMb = fromTemplate.MemoryMinMb;
+			if (!HasField(body, "memoryMaxMb")) spec.MemoryMaxMb = fromTemplate.MemoryMaxMb;
+			if (!HasField(body, "diskGb")) spec.DiskGb = fromTemplate.DiskGb;
+			if (!HasField(body, "switchName")) spec.SwitchName = fromTemplate.SwitchName;
+			if (!HasField(body, "autoStart")) spec.AutoStart = fromTemplate.AutoStart;
+			if (!HasField(body, "notes")) spec.Notes = fromTemplate.Notes;
+		}
+
+		VmCreator.Result r = VmCreator.Create(spec);
+		_audit.Write(si.User, "vm.create",
+			spec.Name + " (Gen" + spec.Generation + ", " + spec.Cpu + " vCPU, " +
+			spec.MemoryMb + " МБ, " + spec.DiskGb + " ГБ)",
+			(r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
+
+		WriteJson(ctx, r.ToJson(), r.Ok ? 200 : 400);
+	}
+
+	/// <summary>Было ли поле в теле запроса (а не подставлено по умолчанию).</summary>
+	private static bool HasField(Dictionary<string, object> body, string name)
+	{
+		return body != null && body.ContainsKey(name) && body[name] != null;
 	}
 
 	private void HandleSettings(HttpListenerContext ctx, SessionInfo si)	{

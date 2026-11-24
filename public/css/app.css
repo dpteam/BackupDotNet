@@ -1059,6 +1059,29 @@ td.cell-click:active span { transform: scale(1.02); }
 }
 .vm-summary b { color: var(--ink); }
 
+/* Форма мастера создания ВМ: две колонки на широком окне. */
+.vm-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 14px;
+  margin-bottom: 10px;
+}
+
+.vm-form .fld:last-child:nth-child(odd) {
+  grid-column: span 2;
+}
+
+/* Флажки в мастере — столбиком: inline-flex из общего стиля здесь
+   выстраивает их в одну строку и подписи слипаются. */
+.vm-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.vm-checks .chk { margin-top: 0; }
+
 .vm-table td { vertical-align: middle; }
 
 .vm-disk {
