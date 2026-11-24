@@ -105,6 +105,7 @@ netsh http add urlacl url=http://+:8080/ user="NT AUTHORITY\SYSTEM"
 | `vm.maxBatchSize` | `5` | сколько машин можно обработать одной массовой операцией |
 | `vm.quarantineDays` | `7` | сколько дней машина лежит в карантине до окончательного удаления |
 | `vm.requireForceForProtected` | `true` | требовать подтверждение для защищённых ВМ |
+| `storage.targets` | `[]` | хранилища для проверки: `[{"path":"\\\\srv\\share","label":"бэкапы"}]` или просто список путей |
 | `updates.enabled` | `false` | включить проверку обновлений |
 | `updates.source` | `local` | `local` (папка) или `github` (GitHub Releases) |
 | `updates.path` | — | каталог или сетевая папка с `latest.json` (для `local`) |

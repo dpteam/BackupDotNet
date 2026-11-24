@@ -36,6 +36,9 @@
 - `PsBridge` — вызов Windows PowerShell 5.1 из агента
   (`System.Management.Automation` из GAC). Понадобился потому, что WMI
   `ModifyFeatureSettings` для VLAN не работает ни с каким XML.
+- **Проверка хранилищ** — доступность, свободное место (в том числе для UNC),
+  пробная запись с чтением обратно, iSCSI-сессии. `GET /api/storage`,
+  `POST /api/storage/check`. Цели задаются в `storage.targets`.
 - **Шаблоны конфигурации** — сохранить набор параметров и создавать машины
   из него. `GET /api/vm/templates`, `POST /api/vm/templates/save|delete`.
 - **Питание ВМ** — старт, штатное и жёсткое выключение, пауза, возобновление,

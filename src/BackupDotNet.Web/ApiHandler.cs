@@ -196,6 +196,9 @@ public class ApiHandler
 			case "/api/network":
 				HandleNetwork(ctx, session);
 				return;
+			case "/api/storage":
+				HandleStorage(ctx, session);
+				return;
 			case "/api/users":
 				if (method == "GET")
 				{
@@ -576,6 +579,11 @@ public class ApiHandler
 			if (path == "/api/network/vlan" && method == "POST")
 			{
 				HandleSetVlan(ctx, session);
+				return;
+			}
+			if (path == "/api/storage/check" && method == "POST")
+			{
+				HandleStorageCheck(ctx, session);
 				return;
 			}
 			if (path == "/api/support/preview" && method == "GET")
@@ -1888,6 +1896,67 @@ public class ApiHandler
 		_audit.Write(si.User, "vm.vlan", name + (adapter.Length > 0 ? " / " + adapter : "") + " → VLAN " + vlan,
 			(r.Ok ? "ok" : r.Message) + ", IP " + ClientIp(ctx));
 		WriteJson(ctx, r.ToJson(), r.Ok ? 200 : (r.Protected ? 403 : 400));
+	}
+
+	/// <summary>
+	/// GET /api/storage — хранилища: доступность, место, iSCSI-сессии.
+	/// Параметр <c>?write=1</c> включает пробную запись (медленнее, но честнее).
+	/// </summary>
+	private void HandleStorage(HttpListenerContext ctx, SessionInfo si)
+	{
+		bool writeTest = Query(ctx, "write") == "1";
+
+		List<StorageCheck.Target> targets = StorageCheck.CheckAll(_settings, writeTest);
+		List<object> list = new List<object>();
+		foreach (StorageCheck.Target t in targets)
+		{
+			list.Add(t.ToJson());
+		}
+
+		string note;
+		List<StorageCheck.IscsiSession> sessions = StorageCheck.IscsiSessions(out note);
+		List<object> iscsi = new List<object>();
+		foreach (StorageCheck.IscsiSession s in sessions)
+		{
+			iscsi.Add(s.ToJson());
+		}
+
+		Dictionary<string, object> res = Json.Obj();
+		res["targets"] = list;
+		res["count"] = list.Count;
+		res["writeTest"] = writeTest;
+		res["iscsiSessions"] = iscsi;
+		res["iscsiNote"] = note;
+		if (list.Count == 0)
+		{
+			res["hint"] = "хранилища не заданы: добавьте storage.targets в настройках " +
+				"или укажите backup.destination";
+		}
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// POST /api/storage/check — проверить произвольный путь, не добавляя его
+	/// в настройки. Тело: <c>{"path":"\\\\server\\share","write":true}</c>.
+	/// </summary>
+	private void HandleStorageCheck(HttpListenerContext ctx, SessionInfo si)
+	{
+		Dictionary<string, object> body = ReadJson(ctx);
+		string path = Json.GetStr(body, "path", "").Trim();
+		bool writeTest = Json.Bool(Json.Get(body, "write"), dflt: true);
+
+		if (path.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "не указан путь"), 400);
+			return;
+		}
+
+		StorageCheck.Target t = StorageCheck.Check(path, writeTest, 15);
+		_audit.Write(si.User, "storage.check", path,
+			(t.Ok ? "ok" : t.Error) + ", IP " + ClientIp(ctx));
+
+		Dictionary<string, object> res = t.ToJson();
+		WriteJson(ctx, res, 200);
 	}
 
 	/// <summary>GET /api/orphans — что лежит в отстойнике сирот.</summary>

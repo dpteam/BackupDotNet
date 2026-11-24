@@ -5275,7 +5275,6 @@
       '<span class="spacer"></span>' +
       '<span class="muted" style="font-size:11px">' + hostAdapters.length + '</span></div>' +
       '<div class="card-body" style="padding:0">';
-
     if (!hostAdapters.length) {
       html += '<div style="padding:16px" class="muted">Адаптеров не найдено.</div>';
     } else {
@@ -5298,6 +5297,16 @@
     }
     html += '</div></div>';
 
+    // --- хранилища: отдельная карточка, потому что вопрос «куда пишется бэкап»
+    // важнее, чем «какой у хоста шлюз»
+    html += '<div class="card"><div class="card-head"><i class="fas fa-database"></i> Хранилища' +
+      '<span class="spacer"></span>' +
+      '<label class="chk" style="margin:0"><input type="checkbox" id="st-write"> проверить запись</label>' +
+      '<button class="btn btn-sm" id="st-refresh" style="margin-left:8px">' +
+      '<i class="fas fa-sync-alt"></i> Проверить</button>' +
+      '</div><div class="card-body" id="st-box">' +
+      '<div class="muted"><i class="fas fa-spinner fa-spin"></i> проверяю доступность…</div></div></div>';
+
     view.innerHTML = html;
 
     document.getElementById('net-refresh').addEventListener('click', function () {
@@ -5305,6 +5314,12 @@
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
       renderNetwork();
+    });
+
+    loadStorage();
+
+    document.getElementById('st-refresh').addEventListener('click', function () {
+      loadStorage(true);
     });
 
     view.querySelectorAll('[data-vlan-vm]').forEach(function (btn) {
@@ -5315,8 +5330,90 @@
     });
   }
 
-  /** Диалог смены VLAN: значение, предупреждение о риске, подтверждение. */
-  function showVlanDialog(vmName, adapterName, currentVlan) {
+  /** Хранилища: доступность, место, возможность записи, iSCSI. */
+  function loadStorage(force) {
+    var box = document.getElementById('st-box');
+    if (!box) return;
+
+    var writeEl = document.getElementById('st-write');
+    var write = writeEl ? writeEl.checked : false;
+    if (!force && writeEl) {
+      // Переключатель «проверить запись» сам запускает перепроверку.
+      writeEl.addEventListener('change', function () { loadStorage(true); });
+    }
+
+    box.innerHTML = '<div class="muted"><i class="fas fa-spinner fa-spin"></i> ' +
+      (write ? 'проверяю доступ и запись…' : 'проверяю доступность…') + '</div>';
+
+    api('/api/storage' + (write ? '?write=1' : '')).then(function (d) {
+      var targets = d.targets || [];
+      var iscsi = d.iscsiSessions || [];
+
+      var html = '';
+
+      if (!targets.length) {
+        html += '<div class="hyg-ok"><i class="fas fa-circle-info"></i> ' +
+          esc(d.hint || 'хранилища не заданы') + '</div>';
+      } else {
+        html += '<table class="journal-table"><thead><tr>' +
+          '<th>Хранилище</th><th>Доступ</th><th>Свободно</th><th>Запись</th><th>Отклик</th>' +
+          '</tr></thead><tbody>';
+
+        targets.forEach(function (t) {
+          var access = t.ok
+            ? '<span class="badge s-OK">доступно</span>'
+            : '<span class="badge s-FAIL">недоступно</span>';
+
+          var freeText = t.totalGb > 0
+            ? t.freeGb + ' из ' + t.totalGb + ' ГБ' +
+              '<div class="muted" style="font-size:10.5px">' + t.freePercent + '% свободно</div>'
+            : '<span class="muted">—</span>';
+
+          var writeText;
+          if (t.writable === true) {
+            writeText = '<span style="color:var(--ok)"><i class="fas fa-check"></i> да</span>';
+          } else if (t.writable === false) {
+            writeText = '<span style="color:var(--fail)"><i class="fas fa-times"></i> нет</span>';
+          } else {
+            writeText = '<span class="muted">не проверялась</span>';
+          }
+
+          var warn = (t.warnings || []).length
+            ? '<div class="muted" style="font-size:10.5px;color:var(--warn)">' +
+              esc(t.warnings.join('; ')) + '</div>'
+            : '';
+
+          html += '<tr>' +
+            '<td><strong>' + esc(t.label || t.path) + '</strong>' +
+              '<div class="muted" style="font-size:10.5px">' + esc(t.path) + '</div>' +
+              (t.error ? '<div style="color:var(--fail);font-size:10.5px">' + esc(t.error) + '</div>' : '') +
+              warn + '</td>' +
+            '<td>' + access + '</td>' +
+            '<td style="white-space:nowrap">' + freeText + '</td>' +
+            '<td>' + writeText + '</td>' +
+            '<td class="muted" style="font-size:11px;white-space:nowrap">' +
+              (t.latencyMs > 0 ? t.latencyMs + ' мс' : '<1 мс') + '</td>' +
+            '</tr>';
+        });
+        html += '</tbody></table>';
+      }
+
+      // iSCSI: если инициатор не настроен — это норма, а не проблема.
+      html += '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' +
+        '<i class="fas fa-hard-drive"></i> iSCSI: ' +
+        (iscsi.length
+          ? iscsi.map(function (s) {
+              return esc(s.target) + (s.state ? ' (' + esc(s.state) + ')' : '');
+            }).join(', ')
+          : esc(d.iscsiNote || 'сессий нет')) + '</p>';
+
+      box.innerHTML = html;
+    }).catch(function (err) {
+      box.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
+    });
+  }
+
+  /** Диалог смены VLAN: значение, предупреждение о риске, подтверждение. */  function showVlanDialog(vmName, adapterName, currentVlan) {
     var div = document.createElement('div');
     div.innerHTML = '<div class="modal-backdrop" id="vlan-modal"><div class="modal">' +
       '<h3><i class="fas fa-tag"></i> VLAN: ' + esc(vmName) + '</h3>' +

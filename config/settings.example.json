@@ -71,6 +71,11 @@
     "quarantineDays": 7,
     "requireForceForProtected": true
   },
+  "storage": {
+    "targets": [
+      { "path": "\\\\fileserver\\Backups", "label": "основное хранилище" }
+    ]
+  },
   "updates": {
     "enabled": false,
     "source": "local",

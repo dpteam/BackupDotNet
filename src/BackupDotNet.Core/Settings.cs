@@ -1,8 +1,17 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using BackupDotNet.Core.Backup;
 
 namespace BackupDotNet.Core;
 
+/// <summary>
+/// Хранилище для проверки доступности: путь и подпись для интерфейса.
+/// </summary>
+public class StorageTarget
+{
+	public string Path = "";
+
+	public string Label = "";
+}
 public class Settings
 {
 	public string AgentName = "";
@@ -190,6 +199,11 @@ public class Settings
 	/// <summary>Требовать force для действий над защищёнными ВМ.</summary>
 	public bool VmRequireForceForProtected = true;
 
+	/// <summary>
+	/// Хранилища для проверки доступности: каталоги бэкапов, сетевые шары.
+	/// </summary>
+	public List<StorageTarget> StorageTargets = new List<StorageTarget>();
+
 	public static Settings FromJson(Dictionary<string, object> root)
 	{
 		Settings s = new Settings();
@@ -266,6 +280,8 @@ public class Settings
 		s.VmQuarantineDays = Json.Int(Json.Get(vm, "quarantineDays"), s.VmQuarantineDays);
 		s.VmRequireForceForProtected = Json.Bool(Json.Get(vm, "requireForceForProtected"), s.VmRequireForceForProtected);
 
+		s.StorageTargets = ReadStorageTargets(Json.Get(root, "storage"));
+
 		Dictionary<string, object> nt = Json.AsObject(Json.Get(root, "notifications"));
 		s.NotifyEnabled = Json.Bool(Json.Get(nt, "enabled"), s.NotifyEnabled);
 		Dictionary<string, object> on = Json.AsObject(Json.Get(nt, "on"));
@@ -297,6 +313,58 @@ public class Settings
 		s.NotifyTelegramChats = ReadStringList(Json.Get(tg, "chats"));
 
 		return s;
+	}
+
+	/// <summary>
+	/// Читает список хранилищ. Поддерживает два формата:
+	/// массив объектов <c>[{"path":"\\\\srv\\share","label":"бэкапы"}]</c>
+	/// и массив строк <c>["\\\\srv\\share"]</c> — так проще писать руками.
+	/// </summary>
+	private static List<StorageTarget> ReadStorageTargets(object value)
+	{
+		List<StorageTarget> list = new List<StorageTarget>();
+		if (value == null)
+		{
+			return list;
+		}
+
+		Dictionary<string, object> obj = Json.AsObject(value);
+		object items = obj.Count > 0 ? Json.Get(obj, "targets") : value;
+
+		foreach (object o in Json.AsArray(items))
+		{
+			if (o == null)
+			{
+				continue;
+			}
+			// Строка — это путь без подписи.
+			if (o is string plain)
+			{
+				string p = plain.Trim();
+				if (p.Length > 0)
+				{
+					list.Add(new StorageTarget { Path = p });
+				}
+				continue;
+			}
+
+			Dictionary<string, object> d = Json.AsObject(o);
+			if (d.Count == 0)
+			{
+				continue;
+			}
+			string path = Json.GetStr(d, "path", "").Trim();
+			if (path.Length == 0)
+			{
+				continue;
+			}
+			list.Add(new StorageTarget
+			{
+				Path = path,
+				Label = Json.GetStr(d, "label", "")
+			});
+		}
+		return list;
 	}
 
 	/// <summary>
