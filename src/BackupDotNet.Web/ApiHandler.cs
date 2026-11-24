@@ -353,6 +353,12 @@ public class ApiHandler
 					HandleCompanyHistory(ctx, session, rid3);
 					return;
 				}
+				if (rest.EndsWith("/chart") && method == "GET")
+				{
+					string rid4 = rest.Substring(0, rest.Length - "/chart".Length);
+					HandleCompanyChart(ctx, session, rid4);
+					return;
+				}
 				switch (method)
 				{
 				case "PUT":
@@ -4930,6 +4936,97 @@ public class ApiHandler
 		resp["changed"] = changed;
 		resp["errors"] = ToObjectList(errors);
 		WriteJson(ctx, resp, 200);
+	}
+
+	/// <summary>
+	/// GET /api/company/{id}/chart?job=Задание&days=30 — ряд по дням для графиков.
+	/// Отдаёт размер копии, статус и свежесть на каждый день.
+	/// </summary>
+	private void HandleCompanyChart(HttpListenerContext ctx, SessionInfo si, string id)
+	{
+		id = Slugify(Uri.UnescapeDataString(id ?? ""));
+		if (!si.CanSeeCompany(id))
+		{
+			WriteJson(ctx, Json.Obj("error", "нет доступа"), 403);
+			return;
+		}
+
+		string job = Query(ctx, "job").Trim();
+		int days = Json.Int(Query(ctx, "days"), 30);
+		if (days <= 0)
+		{
+			days = 30;
+		}
+		if (days > 366)
+		{
+			days = 366;
+		}
+
+		List<Dictionary<string, object>> series = _store.GetDailySeries(id, job, days);
+
+		Dictionary<string, object> res = Json.Obj();
+		res["company"] = id;
+		res["job"] = job;
+		res["days"] = days;
+		res["series"] = series;
+
+		// Сводка по ряду: удобнее, чем считать в браузере.
+		long maxSize = 0;
+		long minSize = long.MaxValue;
+		double maxAge = 0;
+		int okDays = 0;
+		int failDays = 0;
+		int noDataDays = 0;
+		foreach (Dictionary<string, object> p in series)
+		{
+			string status = Json.GetStr(p, "status", "");
+			if (status == "OK")
+			{
+				okDays++;
+			}
+			else if (status == "FAIL" || status == "WARN")
+			{
+				failDays++;
+			}
+			else if (status == "NODATA")
+			{
+				noDataDays++;
+			}
+
+			object size = Json.Get(p, "sizeBytes");
+			if (size != null)
+			{
+				long s = Json.Long(size, 0L);
+				if (s > maxSize)
+				{
+					maxSize = s;
+				}
+				if (s > 0 && s < minSize)
+				{
+					minSize = s;
+				}
+			}
+			object age = Json.Get(p, "ageHours");
+			if (age != null)
+			{
+				double a = Json.Dbl(age, 0.0);
+				if (a > maxAge)
+				{
+					maxAge = a;
+				}
+			}
+		}
+
+		Dictionary<string, object> summary = Json.Obj();
+		summary["okDays"] = okDays;
+		summary["problemDays"] = failDays;
+		summary["noDataDays"] = noDataDays;
+		summary["maxSizeBytes"] = maxSize;
+		summary["minSizeBytes"] = minSize == long.MaxValue ? 0L : minSize;
+		summary["maxAgeHours"] = Math.Round(maxAge, 1);
+		res["summary"] = summary;
+
+		WriteJson(ctx, res, 200);
 	}
 
 	private void HandleCompanyHistory(HttpListenerContext ctx, SessionInfo si, string id)

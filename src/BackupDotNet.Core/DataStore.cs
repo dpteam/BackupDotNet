@@ -654,8 +654,121 @@ public class DataStore
 		return moved;
 	}
 
-	public Dictionary<string, Dictionary<string, DayAgg>> GetMonth(string ym)
+	/// <summary>
+	/// Ряд по дням для графиков: размер копии, статус, свежесть.
+	///
+	/// Зачем не брать последние N прогонов: при проверке раз в пять минут
+	/// это всего пара дней, а график нужен за месяц. Поэтому читаем по
+	/// месяцам и сводим к одной точке в день.
+	/// </summary>
+	/// <param name="companyId">Компания.</param>
+	/// <param name="job">Задание; пусто — все задания компании.</param>
+	/// <param name="days">Сколько дней назад (включая сегодня).</param>
+	public List<Dictionary<string, object>> GetDailySeries(string companyId, string job, int days)
 	{
+		List<Dictionary<string, object>> result = new List<Dictionary<string, object>>();
+		if (days <= 0)
+		{
+			days = 30;
+		}
+		if (days > 366)
+		{
+			days = 366;
+		}
+
+		DateTime today = DateTime.Today;
+		DateTime from = today.AddDays(-(days - 1));
+
+		// Берём с запасом: за день может быть много прогонов.
+		int limit = days * 200;
+		List<BackupRun> runs = GetJournalRange(companyId, job, from, today.AddDays(1), limit);
+
+		// Группируем по дате.
+		Dictionary<DateTime, List<BackupRun>> byDay = new Dictionary<DateTime, List<BackupRun>>();
+		foreach (BackupRun r in runs)
+		{
+			DateTime d = r.Timestamp.Date;
+			if (d < from || d > today)
+			{
+				continue;
+			}
+			if (!byDay.TryGetValue(d, out List<BackupRun> list))
+			{
+				list = new List<BackupRun>();
+				byDay[d] = list;
+			}
+			list.Add(r);
+		}
+
+		for (DateTime d = from; d <= today; d = d.AddDays(1))
+		{
+			Dictionary<string, object> point = Json.Obj();
+			point["date"] = d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+			if (!byDay.TryGetValue(d, out List<BackupRun> list) || list.Count == 0)
+			{
+				// Дня нет в журнале — это не ноль, а «нет данных».
+				point["status"] = "NODATA";
+				point["sizeBytes"] = null;
+				point["checks"] = 0;
+				result.Add(point);
+				continue;
+			}
+
+			// Худший статус за день: если хоть одна проверка упала — день плохой.
+			BackupStatus worst = BackupStatus.Skip;
+			foreach (BackupRun r in list)
+			{
+				worst = StatusNames.Worst(worst, r.Status);
+			}
+			point["status"] = StatusNames.Of(worst);
+			point["checks"] = list.Count;
+
+			// Размер: последний прогон с непустым размером. Ноль означает
+			// «источник не сообщил», а не «копия пустая».
+			long size = -1L;
+			DateTime? lastSuccess = null;
+			foreach (BackupRun r in list)
+			{
+				if (r.SizeBytes > 0)
+				{
+					size = r.SizeBytes;
+				}
+				// «Последний успех» — факт, независимо от текущего статуса:
+				// у упавшей проверки он тоже бывает и как раз показывает,
+				// насколько всё запущено.
+				DateTime? when = r.LastSuccess;
+				if (!when.HasValue && r.Status == BackupStatus.Ok)
+				{
+					when = r.Timestamp;
+				}
+				if (when.HasValue && (!lastSuccess.HasValue || when.Value > lastSuccess.Value))
+				{
+					lastSuccess = when;
+				}
+			}
+			point["sizeBytes"] = size >= 0 ? (object)size : null;
+
+			// Свежесть: сколько часов прошло с последнего успеха на конец дня.
+			// Для сегодняшнего дня — до текущего момента.
+			DateTime endOfDay = d == today ? DateTime.Now : d.AddDays(1);
+			if (lastSuccess.HasValue)
+			{
+				double hours = (endOfDay - lastSuccess.Value).TotalHours;
+				point["ageHours"] = Math.Round(Math.Max(0, hours), 1);
+			}
+			else
+			{
+				point["ageHours"] = null;
+			}
+
+			result.Add(point);
+		}
+
+		return result;
+	}
+
+	public Dictionary<string, Dictionary<string, DayAgg>> GetMonth(string ym)	{
 		lock (_sync)
 		{
 			_rollups.ContainsKey(GetAnyCompanyKey());

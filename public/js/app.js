@@ -28,8 +28,285 @@
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
 
-  function esc(s) {
-    if (s === null || s === undefined) return '';
+  // ------------------------------------------------------------------ палитра команд
+
+  /**
+   * Палитра команд (Ctrl+K): переходы, компании, действия.
+   * Один поиск по всему, что можно нажать, вместо запоминания меню.
+   */
+  var paletteState = { items: [], filtered: [], index: 0, open: false };
+
+  function buildPaletteItems() {
+    var items = [];
+
+    // Разделы интерфейса. Скрытые пункты (нет прав) не показываем.
+    var navs = document.querySelectorAll('[data-nav]');
+    for (var i = 0; i < navs.length; i++) {
+      var el = navs[i];
+      if (el.classList.contains('hidden')) continue;
+      var label = (el.querySelector('span') || el).textContent.trim();
+      var icon = (el.querySelector('i') || {}).className || '';
+      var route = el.getAttribute('data-nav');
+      items.push({
+        title: label,
+        group: 'Разделы',
+        icon: icon.replace('fas', '').trim(),
+        run: function (r) { return function () { location.hash = '#/' + r; }; }(route)
+      });
+    }
+
+    // Компании из уже загруженного дашборда.
+    var companies = (state.summary && state.summary.companies) || [];
+    companies.forEach(function (c) {
+      var worst = c.worstStatus || c.status || '';
+      items.push({
+        title: c.name || c.id,
+        subtitle: c.id + (worst ? ' · ' + worst : ''),
+        group: 'Компании',
+        icon: 'fa-building',
+        run: function (id) { return function () { location.hash = '#/company/' + encodeURIComponent(id); }; }(c.id)
+      });
+    });
+
+    // Действия.
+    if (canWrite()) {
+      items.push({
+        title: 'Запустить все проверки',
+        group: 'Действия',
+        icon: 'fa-play',
+        run: function () { runCheckAll(); }
+      });
+    }
+    items.push({
+      title: 'Переключить тему',
+      subtitle: 'тёмная / светлая',
+      group: 'Действия',
+      icon: 'fa-adjust',
+      run: function () { toggleTheme(); }
+    });
+    if (canWrite()) {
+      items.push({
+        title: 'Создать виртуальную машину',
+        group: 'Действия',
+        icon: 'fa-plus',
+        run: function () { location.hash = '#/inventory'; setTimeout(showVmCreateDialog, 400); }
+      });
+    }
+
+    return items;
+  }
+
+  /** Нечёткий поиск: все слова запроса должны найтись в строке. */
+  function paletteMatch(item, query) {
+    if (!query) return true;
+    var hay = (item.title + ' ' + (item.subtitle || '') + ' ' + (item.group || '')).toLowerCase();
+    var words = query.toLowerCase().split(/\s+/);
+    for (var i = 0; i < words.length; i++) {
+      if (words[i] && hay.indexOf(words[i]) < 0) return false;
+    }
+    return true;
+  }
+
+  function openPalette() {
+    if (paletteState.open) return;
+    paletteState.open = true;
+    paletteState.items = buildPaletteItems();
+    paletteState.filtered = paletteState.items.slice();
+    paletteState.index = 0;
+
+    var div = document.createElement('div');
+    div.innerHTML = '<div class="modal-backdrop palette-backdrop" id="palette-modal">' +
+      '<div class="palette">' +
+      '<div class="palette-input-wrap">' +
+      '<i class="fas fa-search"></i>' +
+      '<input type="text" id="palette-input" placeholder="Раздел, компания или действие…" ' +
+      'autocomplete="off" spellcheck="false">' +
+      '<span class="palette-hint">Esc</span>' +
+      '</div>' +
+      '<div class="palette-list" id="palette-list"></div>' +
+      '</div></div>';
+    document.body.appendChild(div.firstChild);
+
+    var input = document.getElementById('palette-input');
+    input.addEventListener('input', function () {
+      paletteState.index = 0;
+      drawPalette();
+    });
+    input.addEventListener('keydown', paletteKeys);
+    input.focus();
+
+    document.getElementById('palette-modal').addEventListener('click', function (e) {
+      if (e.target === this) closePalette();
+    });
+
+    drawPalette();
+  }
+
+  function closePalette() {
+    paletteState.open = false;
+    var m = document.getElementById('palette-modal');
+    if (m) m.parentNode.removeChild(m);
+  }
+
+  function paletteKeys(e) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (paletteState.filtered.length) {
+        paletteState.index = (paletteState.index + 1) % paletteState.filtered.length;
+        drawPalette();
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (paletteState.filtered.length) {
+        paletteState.index = (paletteState.index - 1 + paletteState.filtered.length) % paletteState.filtered.length;
+        drawPalette();
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      runPaletteItem(paletteState.filtered[paletteState.index]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closePalette();
+    }
+  }
+
+  function drawPalette() {
+    var list = document.getElementById('palette-list');
+    if (!list) return;
+
+    var q = document.getElementById('palette-input').value;
+    paletteState.filtered = paletteState.items.filter(function (it) { return paletteMatch(it, q); });
+
+    if (paletteState.index >= paletteState.filtered.length) {
+      paletteState.index = 0;
+    }
+
+    if (!paletteState.filtered.length) {
+      list.innerHTML = '<div class="palette-empty">Ничего не найдено</div>';
+      return;
+    }
+
+    // Группируем по разделам, сохраняя порядок.
+    var order = [];
+    var groups = {};
+    paletteState.filtered.forEach(function (it, i) {
+      if (!groups[it.group]) {
+        groups[it.group] = [];
+        order.push(it.group);
+      }
+      groups[it.group].push({ item: it, idx: i });
+    });
+
+    var html = '';
+    order.forEach(function (g) {
+      html += '<div class="palette-group">' + esc(g) + '</div>';
+      groups[g].forEach(function (entry) {
+        var sel = entry.idx === paletteState.index;
+        html += '<div class="palette-item' + (sel ? ' sel' : '') + '" data-idx="' + entry.idx + '">' +
+          '<i class="fas ' + esc(entry.item.icon || 'fa-angle-right') + '"></i>' +
+          '<div class="palette-text"><div class="palette-title">' + esc(entry.item.title) + '</div>' +
+          (entry.item.subtitle ? '<div class="palette-sub">' + esc(entry.item.subtitle) + '</div>' : '') +
+          '</div></div>';
+      });
+    });
+
+    list.innerHTML = html;
+
+    list.querySelectorAll('[data-idx]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        runPaletteItem(paletteState.filtered[parseInt(this.getAttribute('data-idx'), 10)]);
+      });
+      el.addEventListener('mouseenter', function () {
+        paletteState.index = parseInt(this.getAttribute('data-idx'), 10);
+        drawPalette();
+      });
+    });
+
+    var sel = list.querySelector('.palette-item.sel');
+    if (sel && sel.scrollIntoView) {
+      sel.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function runPaletteItem(item) {
+    if (!item) return;
+    closePalette();
+    // Небольшая задержка: модалка должна закрыться до перехода,
+    // иначе на медленной странице останется висеть поверх.
+    setTimeout(function () { item.run(); }, 30);
+  }
+
+  /** Глобальные горячие клавиши. */
+  function globalKeys(e) {
+    // Ctrl+K / Cmd+K — палитра. Работает и внутри полей ввода.
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      if (paletteState.open) closePalette();
+      else openPalette();
+      return;
+    }
+
+    // Не мешаем вводу текста.
+    var tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+    if (e.key === '?' ) {
+      e.preventDefault();
+      showShortcutsHelp();
+      return;
+    }
+    if (e.key === 'g') {
+      paletteState.pendingG = true;
+      setTimeout(function () { paletteState.pendingG = false; }, 1200);
+      return;
+    }
+    if (paletteState.pendingG) {
+      paletteState.pendingG = false;
+      var map = {
+        d: '#/dashboard', m: '#/month', j: '#/journal', u: '#/uptime',
+        b: '#/backups', i: '#/inventory', n: '#/network', h: '#/health', s: '#/settings'
+      };
+      if (map[e.key]) {
+        e.preventDefault();
+        location.hash = map[e.key];
+      }
+    }
+  }
+
+  function showShortcutsHelp() {
+    var rows = [
+      ['Ctrl+K', 'палитра команд'],
+      ['?', 'эта справка'],
+      ['g d', 'дашборд'],
+      ['g m', 'таблица по дням'],
+      ['g j', 'журнал'],
+      ['g u', 'доступность'],
+      ['g b', 'бэкапы'],
+      ['g i', 'инвентарь'],
+      ['g n', 'сеть'],
+      ['g h', 'здоровье'],
+      ['g s', 'настройки'],
+      ['Esc', 'закрыть окно']
+    ];
+    var div = document.createElement('div');
+    div.innerHTML = '<div class="modal-backdrop" id="keys-modal"><div class="modal">' +
+      '<h3><i class="fas fa-keyboard"></i> Горячие клавиши</h3>' +
+      '<table class="cfg-table"><tbody>' +
+      rows.map(function (r) {
+        return '<tr><td><kbd>' + esc(r[0]) + '</kbd></td><td>' + esc(r[1]) + '</td></tr>';
+      }).join('') +
+      '</tbody></table>' +
+      '<div class="modal-actions" style="margin-top:14px">' +
+      '<button class="btn" id="keys-close">Закрыть</button></div>' +
+      '</div></div>';
+    document.body.appendChild(div.firstChild);
+    document.getElementById('keys-close').addEventListener('click', function () {
+      var m = document.getElementById('keys-modal');
+      if (m) m.parentNode.removeChild(m);
+    });
+  }
+
+  function esc(s) {    if (s === null || s === undefined) return '';
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -194,13 +471,30 @@
       }, 260);
     }
 
-    html.setAttribute('data-theme', theme);
+    // «Системная» — не третья палитра, а следование настройке ОС.
+    // В data-theme всегда конкретное значение: стили знают только light и dark.
+    var effective = theme === 'auto' ? (systemPrefersDark() ? 'dark' : 'light') : theme;
+
+    html.setAttribute('data-theme', effective);
+    html.setAttribute('data-theme-mode', theme);
     try { localStorage.setItem('bc-theme', theme); } catch (e) {}
   }
 
+  /** Системная тема: тёмная или светлая по настройке ОС. */
+  function systemPrefersDark() {
+    try {
+      return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    } catch (e) {
+      return false;
+    }
+  }
+
   function toggleTheme() {
-    var cur = document.documentElement.getAttribute('data-theme');
-    applyTheme(cur === 'dark' ? 'light' : 'dark', true);
+    // Три состояния по кругу: светлая → тёмная → как в системе.
+    var mode = document.documentElement.getAttribute('data-theme-mode') || 'light';
+    var next = mode === 'light' ? 'dark' : (mode === 'dark' ? 'auto' : 'light');
+    applyTheme(next, true);
+    toast('Тема: ' + (next === 'auto' ? 'как в системе' : (next === 'dark' ? 'тёмная' : 'светлая')), 'ok');
   }
 
   document.getElementById('btn-theme').addEventListener('click', toggleTheme);
@@ -210,8 +504,24 @@
   (function initTheme() {
     var saved = null;
     try { saved = localStorage.getItem('bc-theme'); } catch (e) {}
-    if (saved) applyTheme(saved, false);
+    applyTheme(saved || 'auto', false);
+
+    // ОС переключила тему — интерфейс следует за ней без перезагрузки.
+    try {
+      if (window.matchMedia) {
+        var mq = window.matchMedia('(prefers-color-scheme: dark)');
+        var onChange = function () {
+          if ((document.documentElement.getAttribute('data-theme-mode') || 'auto') === 'auto') {
+            applyTheme('auto', true);
+          }
+        };
+        if (mq.addEventListener) mq.addEventListener('change', onChange);
+        else if (mq.addListener) mq.addListener(onChange);
+      }
+    } catch (e) {}
   })();
+  // Глобальные горячие клавиши: Ctrl+K, ?, g-переходы.
+  document.addEventListener('keydown', globalKeys);
 
   // ------------------------------------------------------------------ роутинг
 
@@ -1226,7 +1536,12 @@
       }
       html += '</div></div>';
 
+      // графики — после таблиц, перед историей: сначала факты, потом тренд
+      html += '<div id="chart-host"></div>';
+
       box.innerHTML = html;
+
+      renderCompanyCharts(c, document.getElementById('chart-host'));
   }
 
   // ------------------------------------------------------------------ железо
@@ -2228,10 +2543,214 @@
     });
   }
 
+  // ------------------------------------------------------------------ графики
+
+  /**
+   * Карточка «Динамика»: размер копии и свежесть по дням.
+   * Рисуется SVG без библиотек — в проекте нет и не будет внешних пакетов.
+   */
+  function renderCompanyCharts(company, box) {
+    box.innerHTML = '<div class="card"><div class="card-head"><i class="fas fa-chart-line"></i> Динамика' +
+      '<span class="spacer"></span>' +
+      '<select id="chart-job" class="sel-inline"><option value="">все задания</option></select>' +
+      '<select id="chart-days" class="sel-inline" style="margin-left:6px">' +
+      '<option value="7">7 дней</option>' +
+      '<option value="30" selected>30 дней</option>' +
+      '<option value="90">90 дней</option>' +
+      '</select>' +
+      '</div><div class="card-body" id="chart-body">' +
+      '<div class="muted"><i class="fas fa-spinner fa-spin"></i> собираю данные…</div></div></div>';
+
+    var jobSel = document.getElementById('chart-job');
+    var daysSel = document.getElementById('chart-days');
+
+    // Список заданий берём из карточки компании: он уже загружен.
+    var jobs = (company.jobs || []);
+    jobs.forEach(function (j) {
+      var opt = document.createElement('option');
+      opt.value = j.job;
+      opt.textContent = j.job;
+      jobSel.appendChild(opt);
+    });
+
+    function reload() {
+      loadChartData(company.id, jobSel.value, parseInt(daysSel.value, 10) || 30,
+        company.policy ? company.policy.freshnessHours : 0);
+    }
+    jobSel.addEventListener('change', reload);
+    daysSel.addEventListener('change', reload);
+    reload();
+  }
+
+  function loadChartData(companyId, job, days, threshold) {
+    var body = document.getElementById('chart-body');
+    if (!body) return;
+
+    body.innerHTML = '<div class="muted"><i class="fas fa-spinner fa-spin"></i> собираю данные…</div>';
+
+    var url = '/api/company/' + encodeURIComponent(companyId) + '/chart?days=' + days +
+      (job ? '&job=' + encodeURIComponent(job) : '');
+
+    api(url).then(function (d) {
+      var series = d.series || [];
+      var s = d.summary || {};
+
+      if (!series.length) {
+        body.innerHTML = '<div class="muted">Данных за период нет.</div>';
+        return;
+      }
+
+      var html = '<div class="chart-stats">' +
+        '<span><i class="fas fa-check-circle" style="color:var(--ok)"></i> дней в норме: <b>' +
+          (s.okDays || 0) + '</b></span>' +
+        '<span><i class="fas fa-exclamation-triangle" style="color:var(--warn)"></i> с проблемами: <b>' +
+          (s.problemDays || 0) + '</b></span>' +
+        '<span><i class="fas fa-question-circle" style="color:var(--nodata)"></i> без данных: <b>' +
+          (s.noDataDays || 0) + '</b></span>' +
+        (s.maxAgeHours ? '<span>макс. возраст: <b>' + fmtHours(s.maxAgeHours) + '</b></span>' : '') +
+        '</div>';
+
+      html += '<div class="chart-block"><div class="chart-title">Размер копии</div>' +
+        svgSizeChart(series) + '</div>';
+
+      html += '<div class="chart-block"><div class="chart-title">Свежесть (часов с последнего успеха)</div>' +
+        svgAgeChart(series, threshold) + '</div>';
+
+      body.innerHTML = html;
+    }).catch(function (err) {
+      body.innerHTML = '<div class="muted">Ошибка: ' + esc(err.message) + '</div>';
+    });
+  }
+
+  function fmtHours(h) {
+    if (h === null || h === undefined) return '—';
+    if (h < 1) return Math.round(h * 60) + ' мин';
+    if (h < 48) return Math.round(h * 10) / 10 + ' ч';
+    return Math.round(h / 24) + ' дн';
+  }
+
+  /** Цвет точки по статусу дня. */
+  function statusColor(status) {
+    switch (status) {
+    case 'OK': return 'var(--ok)';
+    case 'WARN': return 'var(--warn)';
+    case 'FAIL': return 'var(--fail)';
+    default: return 'var(--nodata)';
+    }
+  }
+
+  /**
+   * График размера: столбики по дням, цвет — статус дня.
+   * Пустые дни (нет данных) остаются пустыми, а не нулевыми.
+   */
+  function svgSizeChart(series) {
+    var w = 100, h = 34;          // условные единицы, растягивается по ширине
+    var n = series.length;
+    if (!n) return '';
+
+    var max = 0;
+    series.forEach(function (p) {
+      if (p.sizeBytes && p.sizeBytes > max) max = p.sizeBytes;
+    });
+
+    var padTop = 4;
+    var barW = (w - 2) / n;
+    var bars = '';
+
+    series.forEach(function (p, i) {
+      var x = 1 + i * barW;
+      var color = statusColor(p.status);
+      var title = p.date + ': ' + (p.sizeBytes ? fmtSize(p.sizeBytes) : 'нет данных') +
+        ' (' + p.status + ')';
+
+      if (p.sizeBytes && max > 0) {
+        var ratio = p.sizeBytes / max;
+        var barH = Math.max(1, (h - padTop - 2) * ratio);
+        var y = h - 1 - barH;
+        bars += '<rect x="' + x.toFixed(2) + '" y="' + y.toFixed(2) +
+          '" width="' + Math.max(0.6, barW * 0.72).toFixed(2) + '" height="' + barH.toFixed(2) +
+          '" fill="' + color + '" opacity="0.85"><title>' + esc(title) + '</title></rect>';
+      } else {
+        // Нет данных — маленькая засечка у основания, чтобы день был виден.
+        bars += '<rect x="' + x.toFixed(2) + '" y="' + (h - 2).toFixed(2) +
+          '" width="' + Math.max(0.6, barW * 0.72).toFixed(2) + '" height="1" ' +
+          'fill="var(--border-soft)"><title>' + esc(title) + '</title></rect>';
+      }
+    });
+
+    var maxLabel = max > 0 ? fmtSize(max) : '';
+    return '<div class="chart-svg-wrap">' +
+      '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" class="chart-svg">' +
+      bars + '</svg>' +
+      (maxLabel ? '<div class="chart-max">макс: ' + esc(maxLabel) + '</div>' : '') +
+      '<div class="chart-axis"><span>' + esc(series[0].date) + '</span>' +
+      '<span>' + esc(series[n - 1].date) + '</span></div>' +
+      '</div>';
+  }
+
+  /**
+   * График свежести: линия по дням плюс порог из политики компании.
+   * Порог важен: без него линия ничего не говорит.
+   */
+  function svgAgeChart(series, threshold) {
+    var w = 100, h = 34;
+    var n = series.length;
+    if (!n) return '';
+
+    var max = 0;
+    series.forEach(function (p) {
+      if (p.ageHours !== null && p.ageHours !== undefined && p.ageHours > max) max = p.ageHours;
+    });
+    if (max <= 0) max = 1;
+
+    // Порог свежести из политики компании: без него линия ничего не говорит.
+    threshold = threshold || 0;
+    if (threshold > max) max = threshold;
+
+    var stepX = (w - 2) / Math.max(1, n - 1);
+    var points = [];
+    var dots = '';
+
+    series.forEach(function (p, i) {
+      var x = 1 + i * stepX;
+      if (p.ageHours === null || p.ageHours === undefined) {
+        return;
+      }
+      var ratio = p.ageHours / max;
+      var y = h - 2 - (h - 5) * ratio;
+      points.push(x.toFixed(2) + ',' + y.toFixed(2));
+
+      var color = threshold > 0 && p.ageHours > threshold ? 'var(--fail)' : 'var(--brand)';
+      dots += '<circle cx="' + x.toFixed(2) + '" cy="' + y.toFixed(2) + '" r="0.9" fill="' + color + '">' +
+        '<title>' + esc(p.date + ': ' + fmtHours(p.ageHours)) + '</title></circle>';
+    });
+
+    var line = points.length > 1
+      ? '<polyline points="' + points.join(' ') + '" fill="none" stroke="var(--brand)" ' +
+        'stroke-width="0.5" vector-effect="non-scaling-stroke"/>'
+      : '';
+
+    var thr = '';
+    if (threshold > 0 && threshold <= max) {
+      var ty = h - 2 - (h - 5) * (threshold / max);
+      thr = '<line x1="1" y1="' + ty.toFixed(2) + '" x2="' + (w - 1) + '" y2="' + ty.toFixed(2) +
+        '" stroke="var(--warn)" stroke-width="0.4" stroke-dasharray="2 1.5" vector-effect="non-scaling-stroke">' +
+        '<title>порог ' + threshold + ' ч</title></line>';
+    }
+
+    return '<div class="chart-svg-wrap">' +
+      '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" class="chart-svg">' +
+      thr + line + dots + '</svg>' +
+      '<div class="chart-max">макс: ' + esc(fmtHours(max)) +
+        (threshold > 0 ? ' · порог ' + threshold + ' ч' : '') + '</div>' +
+      '<div class="chart-axis"><span>' + esc(series[0].date) + '</span>' +
+      '<span>' + esc(series[n - 1].date) + '</span></div>' +
+      '</div>';
+  }
+
   // ------------------------------------------------------------------ переименование
 
-  function showRenameDialog(c) {
-    var html = '<div class="modal-backdrop" id="rename-modal">' +
+  function showRenameDialog(c) {    var html = '<div class="modal-backdrop" id="rename-modal">' +
       '<div class="modal">' +
       '<h3><i class="fas fa-i-cursor"></i> Сменить ID компании</h3>' +
       '<p class="muted" style="font-size:11.5px">Текущий: <code>' + esc(c.id) + '</code></p>' +
@@ -2528,7 +3047,7 @@
         '</div><div class="card-body" id="brand-box">' +
         '<div class="muted">Загрузка…</div></div></div>';
 
-      html += '<div class="card"><div class="card-head"><i class="fas fa-cloud-arrow-down"></i> Обновления' +
+      html += '<div class="card"><div class="card-head"><i class="fas fa-cloud-download-alt"></i> Обновления' +
         '<span class="spacer"></span><span class="muted" style="font-size:11px" id="upd-summary"></span>' +
         '</div><div class="card-body" id="upd-box"><div class="muted">Загрузка…</div></div></div>';
 
@@ -2549,7 +3068,7 @@
         '<span class="spacer"></span><span class="muted" style="font-size:11px" id="lp-summary"></span>' +
         '</div><div class="card-body" id="lp-box"><div class="muted">Загрузка…</div></div></div>';
 
-      html += '<div class="card"><div class="card-head"><i class="fas fa-file-zipper"></i> Конфигурация' +
+      html += '<div class="card"><div class="card-head"><i class="fas fa-file-archive"></i> Конфигурация' +
         '<span class="spacer"></span>' +
         '<span class="muted" style="font-size:11px">перенос между машинами</span>' +
         '</div><div class="card-body">' +
@@ -2647,7 +3166,7 @@
       if (u.available) {
         if (summary) summary.textContent = 'доступна ' + u.latestVersion;
         var html = '<div class="upd-banner">' +
-          '<i class="fas fa-circle-up"></i>' +
+          '<i class="fas fa-arrow-circle-up"></i>' +
           '<div><div class="upd-title">Доступна версия ' + esc(u.latestVersion) + '</div>' +
           '<div class="upd-sub">установлена ' + esc(u.currentVersion) +
           (u.publishedAt ? ' · опубликована ' + esc(fmtDate(u.publishedAt)) : '') + '</div></div>' +
@@ -2752,7 +3271,7 @@
         }
 
         html += '<div class="cfg-actions" style="margin-top:12px">' +
-          '<button class="btn btn-sm btn-primary" id="ghu-check"><i class="fas fa-cloud-arrow-down"></i> ' +
+          '<button class="btn btn-sm btn-primary" id="ghu-check"><i class="fas fa-cloud-download-alt"></i> ' +
             'Проверить обновления</button>' +
           '<button class="btn btn-sm" id="ghu-download"' + (rel ? '' : ' disabled') + '>' +
             '<i class="fas fa-download"></i> Скачать' + (rel ? ' ' + esc(rel.version) : '') + '</button>' +
@@ -2774,7 +3293,7 @@
             }
             if (r.available) {
               document.getElementById('ghu-result').innerHTML =
-                '<div class="cfg-note ok"><i class="fas fa-circle-up"></i> Доступна версия ' +
+                '<div class="cfg-note ok"><i class="fas fa-arrow-circle-up"></i> Доступна версия ' +
                 esc(r.release.version) + ' (установлена ' + esc(r.currentVersion) + ')</div>';
             } else {
               document.getElementById('ghu-result').innerHTML =
@@ -2786,7 +3305,7 @@
             document.getElementById('ghu-result').innerHTML =
               '<div class="cfg-note error">' + esc(err.message) + '</div>';
             btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-cloud-arrow-down"></i> Проверить обновления';
+            btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> Проверить обновления';
           });
         });
 
@@ -3384,7 +3903,7 @@
       '<div class="k">Потоков / хэндлов</div><div>' + (p.threads || '—') + ' / ' + (p.handles || '—') + '</div>' +
       '</div></div></div>';
 
-    html += '<div class="card"><div class="card-head"><i class="fas fa-folder-tree"></i> Пути и размеры</div><div class="card-body">' +
+    html += '<div class="card"><div class="card-head"><i class="fas fa-sitemap"></i> Пути и размеры</div><div class="card-body">' +
       '<div class="kv">' +
       '<div class="k">Программа</div><div><code>' + esc(paths.install) + '</code></div>' +
       '<div class="k">Данные</div><div><code>' + esc(paths.data) + '</code> · ' + (sizes.dataMb || 0) + ' МБ</div>' +
@@ -3572,7 +4091,7 @@
         '</div><div class="card-body" id="ret-box"><div class="muted">Загрузка…</div></div></div>';
 
       // --- расписания
-      html += '<div class="card"><div class="card-head"><i class="fas fa-calendar-days"></i> Расписания' +
+      html += '<div class="card"><div class="card-head"><i class="fas fa-calendar-alt"></i> Расписания' +
         '<span class="spacer"></span>' +
         (state.me && state.me.canWrite ? '<button class="btn btn-sm" id="sch-add"><i class="fas fa-plus"></i> Добавить</button>' : '') +
         '</div><div class="card-body" style="padding:0"><div id="sch-box">' +
@@ -3802,7 +4321,7 @@
             '<td>' + fmtSize(c.sizeBytes) + '</td>' +
             '<td>' + (state.me && state.me.canWrite
               ? '<button class="btn btn-sm" data-verify="' + esc(c.name) + '" title="Проверить копию">' +
-                '<i class="fas fa-shield-check"></i></button>'
+                '<i class="fas fa-shield-alt"></i></button>'
               : '') + '</td></tr>';
         });
         html += '</tbody></table>';
@@ -3828,7 +4347,7 @@
             .catch(function (err) { toast('Ошибка: ' + err.message, 'error'); })
             .then(function () {
               btn.disabled = false;
-              btn.innerHTML = '<i class="fas fa-shield-check"></i>';
+              btn.innerHTML = '<i class="fas fa-shield-alt"></i>';
             });
         });
       });
@@ -4055,7 +4574,7 @@
       : [];
 
     var html = '<div class="modal-backdrop" id="sch-modal"><div class="modal" style="max-width:620px">' +
-      '<h3><i class="fas fa-calendar-days"></i> ' + (isNew ? 'Новое расписание' : 'Расписание: ' + esc(s.title)) + '</h3>' +
+      '<h3><i class="fas fa-calendar-alt"></i> ' + (isNew ? 'Новое расписание' : 'Расписание: ' + esc(s.title)) + '</h3>' +
       '<div class="form-grid">' +
       '<label class="fld"><span>Название</span>' +
       '<input type="text" id="sch-title" value="' + esc(s.title) + '" placeholder="Ночной бэкап ВМ"></label>' +
@@ -5352,7 +5871,7 @@
       var html = '';
 
       if (!targets.length) {
-        html += '<div class="hyg-ok"><i class="fas fa-circle-info"></i> ' +
+        html += '<div class="hyg-ok"><i class="fas fa-info-circle"></i> ' +
           esc(d.hint || 'хранилища не заданы') + '</div>';
       } else {
         html += '<table class="journal-table"><thead><tr>' +
@@ -5400,7 +5919,7 @@
 
       // iSCSI: если инициатор не настроен — это норма, а не проблема.
       html += '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' +
-        '<i class="fas fa-hard-drive"></i> iSCSI: ' +
+        '<i class="fas fa-hdd"></i> iSCSI: ' +
         (iscsi.length
           ? iscsi.map(function (s) {
               return esc(s.target) + (s.state ? ' (' + esc(s.state) + ')' : '');
