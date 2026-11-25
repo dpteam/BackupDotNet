@@ -72,6 +72,10 @@ Copy-Item (Join-Path $root 'ROADMAP.md') $stage -Force
 Copy-Item (Join-Path $root 'CHANGELOG.md') $stage -Force
 Copy-Item (Join-Path $root 'LICENSE') $stage -Force
 Copy-Item (Join-Path $root 'docs') $stage -Recurse -Force
+# Заметки для продолжения работы (docs/HANDOFF-*) — состояние сессии, а не
+# документация продукта: в комплект и в архив они попадать не должны.
+Get-ChildItem (Join-Path $stage 'docs') -Filter 'HANDOFF-*' -File -ErrorAction SilentlyContinue |
+    Remove-Item -Force
 
 # --- скрипт установки ----------------------------------------------------
 $install = @'
