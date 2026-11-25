@@ -45,6 +45,9 @@
 #ifndef MyWizardImage
   #define MyWizardImage "..\assets\agent-icon-wizard.png"
 #endif
+#ifndef MyPrivileges
+  #define MyPrivileges "admin"
+#endif
 
 [Setup]
 AppId={#MyAgentAppId}
@@ -61,7 +64,7 @@ OutputBaseFilename={#MyProductName}-Agent-{#MyVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=admin
+PrivilegesRequired={#MyPrivileges}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyProductName} — агент
@@ -79,8 +82,9 @@ MinVersion=6.3
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Files]
-; Без public: агенту веб-интерфейс не нужен.
-Source: "{#MyPayload}\*"; DestDir: "{app}"; Excludes: "public\*,install.ps1,README.md"; \
+; Без public: агенту веб-интерфейс не нужен. Исключаем каталог целиком,
+; иначе Inno создаёт пустой public — лишний след в установке.
+Source: "{#MyPayload}\*"; DestDir: "{app}"; Excludes: "public,install.ps1,README.md"; \
     Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
@@ -88,12 +92,14 @@ Name: "{group}\Журналы агента"; Filename: "{#MyDataDir}\logs"
 Name: "{group}\Удалить {#MyProductName} (агент)"; Filename: "{uninstallexe}"
 
 [UninstallRun]
+; Остановка службы — в коде: там можно дождаться её реальной остановки.
 Filename: "{sys}\sc.exe"; Parameters: "stop ""{#MyServiceNameRemote}"""; Flags: runhidden; RunOnceId: "StopAgent"
-Filename: "{sys}\sc.exe"; Parameters: "delete ""{#MyServiceNameRemote}"""; Flags: runhidden; RunOnceId: "DeleteAgent"
 
 [UninstallDelete]
-; Только пустые каталоги. В {app}\config лежит config\remote.json, созданный
-; установщиком, — Inno уберёт его сам. Пользовательские файлы не трогаем.
+; Файлы, которые создал установщик. Без них каталог config не станет пустым
+; и останется на диске после удаления.
+Type: files; Name: "{app}\config\remote.json"
+Type: files; Name: "{app}\config\settings.json"
 Type: dirifempty; Name: "{app}\config"
 
 [Code]
@@ -114,6 +120,52 @@ begin
   Exec(ExpandConstant('{sys}\sc.exe'), 'query "' + Name + '"', '', SW_HIDE,
     ewWaitUntilTerminated, Code);
   Result := (Code = 0);
+end;
+
+{ Проверяет состояние службы: 1 — работает, 0 — остановлена, -1 — нет службы. }
+function ServiceState(const Name: string): Integer;
+var
+  Code: Integer;
+  Tmp: string;
+  Output: AnsiString;
+  S: string;
+begin
+  Result := -1;
+  Tmp := ExpandConstant('{tmp}\sc-state.txt');
+  Exec(ExpandConstant('{cmd}'), '/c sc query "' + Name + '" > "' + Tmp + '"',
+    '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Output := '';
+  if not LoadStringFromFile(Tmp, Output) then
+    Exit;
+  DeleteFile(Tmp);
+  S := UpperCase(String(Output));
+  if Pos('RUNNING', S) > 0 then
+    Result := 1
+  else if Pos('STOPPED', S) > 0 then
+    Result := 0;
+end;
+
+{ Останавливает службу и ждёт реальной остановки: иначе её процесс держит
+  exe и деинсталлятор не сможет удалить файлы. }
+function StopServiceAndWait(const Name: string): Boolean;
+var
+  Code: Integer;
+  I: Integer;
+begin
+  Result := True;
+  if ServiceState(Name) < 0 then
+    Exit;
+
+  RunHidden(ExpandConstant('{sys}\sc.exe'), 'stop "' + Name + '"', Code);
+
+  for I := 1 to 30 do
+  begin
+    if ServiceState(Name) = 0 then
+      Break;
+    Sleep(500);
+  end;
+
+  Result := (ServiceState(Name) = 0);
 end;
 
 procedure StopService(const Name: string);
@@ -172,9 +224,37 @@ begin
   Result := SaveStringToFile(Path, Json, False);
 end;
 
+{ Настройки приложения: без файла агент пишет журналы рядом с exe,
+  а не в каталог данных, который создал установщик. }
+function WriteSettingsJson: Boolean;
+var
+  Path: string;
+  Json: string;
+begin
+  Path := ExpandConstant('{app}\config\settings.json');
+  if FileExists(Path) then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  Json :=
+    '{' + #13#10 +
+    '  "agent": {' + #13#10 +
+    '    "name": "{#MyProductName}",' + #13#10 +
+    '    "dataDir": "' + JsonEsc('{#MyDataDir}') + '",' + #13#10 +
+    '    "publicDir": "public",' + #13#10 +
+    '    "configDir": "config"' + #13#10 +
+    '  }' + #13#10 +
+    '}';
+  Result := SaveStringToFile(Path, Json, False);
+end;
+
 { ---------------------------------------------------------------- страницы }
 
 procedure InitializeWizard;
+var
+  CentralParam, TokenParam, AgentParam: string;
 begin
   ConnPage := CreateInputQueryPage(wpSelectDir,
     'Подключение к серверу',
@@ -185,8 +265,18 @@ begin
   ConnPage.Add('Адрес сервера:', False);
   ConnPage.Add('Токен:', False);
   ConnPage.Add('Имя агента:', False);
-  ConnPage.Values[0] := 'https://';
-  ConnPage.Values[2] := GetComputerNameString();
+
+  { Параметры для тихой установки из GPO:
+    /CENTRAL=https://server:8080 /TOKEN=... /AGENT=имя }
+  CentralParam := ExpandConstant('{param:CENTRAL|https://}');
+  TokenParam := ExpandConstant('{param:TOKEN|}');
+  AgentParam := ExpandConstant('{param:AGENT|}');
+  if AgentParam = '' then
+    AgentParam := GetComputerNameString();
+
+  ConnPage.Values[0] := CentralParam;
+  ConnPage.Values[1] := TokenParam;
+  ConnPage.Values[2] := AgentParam;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -252,9 +342,16 @@ begin
     Exit;
   end;
 
-  BinPath := '"' + ExpandConstant('{app}\BackupDotNet.exe') + '" --service-remote';
+  WriteSettingsJson;
+
+  { Кавычки вокруг всего binPath: иначе sc.exe разбирает «--service-remote»
+    как отдельный параметр и служба создаётся без него. }
+#ifdef MyNoService
+  { Тестовый режим: служба не создаётся. }
+#else
+  BinPath := '\"' + ExpandConstant('{app}\BackupDotNet.exe') + '\" --service-remote';
   if not RunHidden(ExpandConstant('{sys}\sc.exe'),
-      'create "{#MyServiceNameRemote}" binPath= ' + BinPath + ' start= auto', Code) then
+      'create "{#MyServiceNameRemote}" binPath= "' + BinPath + '" start= auto', Code) then
   begin
     MsgBox('Не удалось создать службу. Код: ' + IntToStr(Code), mbError, MB_OK);
     Exit;
@@ -269,4 +366,22 @@ begin
   { Firewall не нужен: агент сам открывает исходящие соединения. }
   RunHidden(ExpandConstant('{sys}\sc.exe'), 'start "{#MyServiceNameRemote}"', Code);
   Sleep(2000);
+#endif
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Code: Integer;
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    { Дожидаемся остановки службы: её процесс держит exe, и без ожидания
+      деинсталлятор оставит файлы на диске. }
+    if StopServiceAndWait('{#MyServiceNameRemote}') then
+      RunHidden(ExpandConstant('{sys}\sc.exe'), 'delete "{#MyServiceNameRemote}"', Code)
+    else
+      MsgBox('Служба {#MyServiceNameRemote} не остановилась за 15 секунд. ' +
+        'Файлы могут остаться на диске — остановите службу вручную.',
+        mbInformation, MB_OK);
+  end;
 end;

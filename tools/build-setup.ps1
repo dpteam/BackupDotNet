@@ -87,7 +87,7 @@ Copy-Item (Join-Path $setupBin 'setup-ui') $out -Recurse
 # Брендинг рядом с установщиком: из него мастер берёт название продукта,
 # пути и имя службы. Кладём копию выбранного файла, а не то, что лежит
 # в bin — там рабочая конфигурация конкретной инсталляции.
-$brandSrc = Join-Path $root $Branding
+$brandSrc = if ([System.IO.Path]::IsPathRooted($Branding)) { $Branding } else { Join-Path $root $Branding }
 if (-not (Test-Path $brandSrc)) {
     throw "нет файла брендинга: $brandSrc"
 }
@@ -135,12 +135,18 @@ $cfgSrc = Join-Path $agentBin 'config'
 if (Test-Path $cfgSrc) {
     $cfgDst = Join-Path $payload 'config'
     New-Item -ItemType Directory -Path $cfgDst -Force | Out-Null
-    # Только шаблоны: *.example.json. branding.json не берём из bin —
-    # там рабочая конфигурация этой машины; в payload кладём тот же
-    # брендинг, что и рядом с установщиком.
-    Get-ChildItem $cfgSrc -File | Where-Object {
-        $_.Name -like '*.example.json'
-    } | ForEach-Object { Copy-Item $_.FullName $cfgDst }
+
+    # Шаблоны берём из репозитория, а не из bin: в bin лежат рабочие
+    # конфиги этой машины, и *.example.json там уже переименованы
+    # в settings.json/secrets.json. Из-за этого установка оставалась
+    # без единого шаблона — и без settings.json, из которого приложение
+    # берёт порт и каталог данных.
+    $tplSrc = Join-Path $root 'config'
+    if (Test-Path $tplSrc) {
+        Get-ChildItem $tplSrc -File -Filter '*.example.json' | ForEach-Object {
+            Copy-Item $_.FullName $cfgDst
+        }
+    }
 
     Copy-Item $brandSrc (Join-Path $cfgDst 'branding.json')
 }

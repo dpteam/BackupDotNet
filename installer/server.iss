@@ -48,6 +48,9 @@
 #ifndef MyWizardImage
   #define MyWizardImage "..\assets\server-icon-wizard.png"
 #endif
+#ifndef MyPrivileges
+  #define MyPrivileges "admin"
+#endif
 
 [Setup]
 AppId={#MyAppId}
@@ -64,7 +67,7 @@ OutputBaseFilename={#MyProductName}-Server-{#MyVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=admin
+PrivilegesRequired={#MyPrivileges}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyProductName} — сервер
@@ -103,13 +106,17 @@ Name: "{autodesktop}\{#MyProductName}"; Filename: "http://localhost:{code:GetPor
 Filename: "http://localhost:{code:GetPort}/"; Description: "Открыть веб-интерфейс"; Flags: postinstall shellexec nowait skipifsilent
 
 [UninstallRun]
+; Служба снимается в коде (CurUninstallStepChanged), потому что там можно
+; дождаться её реальной остановки. Здесь только страховка на случай,
+; если код почему-то не отработал.
 Filename: "{sys}\sc.exe"; Parameters: "stop ""{#MyServiceName}"""; Flags: runhidden; RunOnceId: "StopService"
-Filename: "{sys}\sc.exe"; Parameters: "delete ""{#MyServiceName}"""; Flags: runhidden; RunOnceId: "DeleteService"
 
 [UninstallDelete]
-; Ничего не удаляем сверх установленного: в {app}\config лежат рабочие
-; настройки и компании, созданные при работе. Inno и так уберёт свои файлы
-; (шаблоны, branding.json), а пользовательские останутся — их удаляет человек.
+; Файлы, которые создал установщик. Пользовательские (компании, secrets.json)
+; не трогаем: в них работа, которую нельзя восстановить переустановкой.
+Type: files; Name: "{app}\config\settings.json"
+Type: files; Name: "{app}\config\env.json"
+Type: files; Name: "{app}\config\install-port.txt"
 Type: dirifempty; Name: "{app}\config"
 Type: dirifempty; Name: "{app}\public"
 
@@ -117,8 +124,30 @@ Type: dirifempty; Name: "{app}\public"
 var
   PortPage: TInputQueryWizardPage;
   PortValue: Integer;
+  UninstallPort: Integer;
 
 { ---------------------------------------------------------------- утилиты }
+
+{ Экранирует строку для JSON: обратная косая и кавычка. }
+function JsonEsc(const S: string): string;
+var
+  I: Integer;
+  C: Char;
+  R: string;
+begin
+  R := '';
+  for I := 1 to Length(S) do
+  begin
+    C := S[I];
+    if C = '\' then
+      R := R + '\\'
+    else if C = '"' then
+      R := R + '\"'
+    else
+      R := R + C;
+  end;
+  Result := R;
+end;
 
 function RunHidden(const FileName, Params: string; var Code: Integer): Boolean;
 begin
@@ -154,8 +183,8 @@ begin
   Path := ExpandConstant('{app}\config\env.json');
   Json :=
     '{' + #13#10 +
-    '  "installDir": "' + ExpandConstant('{app}') + '",' + #13#10 +
-    '  "dataDir": "{#MyDataDir}",' + #13#10 +
+    '  "installDir": "' + JsonEsc(ExpandConstant('{app}')) + '",' + #13#10 +
+    '  "dataDir": "' + JsonEsc('{#MyDataDir}') + '",' + #13#10 +
     '  "serviceName": "{#MyServiceName}"' + #13#10 +
     '}';
   Result := SaveStringToFile(Path, Json, False);
@@ -168,6 +197,94 @@ function WritePortFile: Boolean;
 begin
   Result := SaveStringToFile(ExpandConstant('{app}\config\install-port.txt'),
     IntToStr(PortValue), False);
+end;
+
+{ Настройки приложения.
+  Без этого файла агент берёт умолчания: dataDir = "data" (то есть каталог
+  рядом с exe, а не ProgramData) и порт 8080. Порт из мастера при этом
+  остаётся только в firewall и urlacl — и служба падает с «отказано
+  в доступе», потому что слушает не тот порт, на который выдано разрешение.
+  Именно так и случилось на первом тесте: служба установилась, не
+  запустилась, а журналы оказались не там, где их искали. }
+function WriteSettingsJson: Boolean;
+var
+  Path: string;
+  Json: string;
+begin
+  Path := ExpandConstant('{app}\config\settings.json');
+
+  { При обновлении не трогаем существующие настройки. }
+  if FileExists(Path) then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  Json :=
+    '{' + #13#10 +
+    '  "agent": {' + #13#10 +
+    '    "name": "{#MyProductName}",' + #13#10 +
+    '    "dataDir": "' + JsonEsc('{#MyDataDir}') + '",' + #13#10 +
+    '    "publicDir": "public",' + #13#10 +
+    '    "configDir": "config",' + #13#10 +
+    '    "httpPort": ' + IntToStr(PortValue) + ',' + #13#10 +
+    '    "bindAddress": "http://+:' + IntToStr(PortValue) + '/"' + #13#10 +
+    '  }' + #13#10 +
+    '}';
+
+  Result := SaveStringToFile(Path, Json, False);
+end;
+
+{ Проверяет состояние службы: 1 — работает, 0 — остановлена, -1 — нет службы. }
+function ServiceState(const Name: string): Integer;
+var
+  Code: Integer;
+  Tmp: string;
+  Output: AnsiString;
+  S: string;
+begin
+  Result := -1;
+  Tmp := ExpandConstant('{tmp}\sc-state.txt');
+  Exec(ExpandConstant('{cmd}'), '/c sc query "' + Name + '" > "' + Tmp + '"',
+    '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Output := '';
+  if not LoadStringFromFile(Tmp, Output) then
+    Exit;
+  DeleteFile(Tmp);
+  S := UpperCase(String(Output));
+  if Pos('RUNNING', S) > 0 then
+    Result := 1
+  else if Pos('STOPPED', S) > 0 then
+    Result := 0;
+end;
+
+{ Останавливает службу и ЖДЁТ, пока она действительно встанет.
+  Без ожидания деинсталлятор пытается удалить файлы, пока процесс ещё
+  жив, не может — и каталог остаётся на диске. }
+function StopServiceAndWait(const Name: string): Boolean;
+var
+  Code: Integer;
+  I: Integer;
+begin
+  Result := True;
+  if ServiceState(Name) < 0 then
+    Exit;
+
+  RunHidden(ExpandConstant('{sys}\sc.exe'), 'stop "' + Name + '"', Code);
+
+  for I := 1 to 30 do
+  begin
+    if ServiceState(Name) = 0 then
+      Break;
+    Sleep(500);
+  end;
+
+  Result := (ServiceState(Name) = 0);
+end;
+
+function ServiceIsRunning(const Name: string): Boolean;
+begin
+  Result := ServiceState(Name) = 1;
 end;
 
 function ReadPortFile: Integer;
@@ -184,14 +301,23 @@ end;
 { ---------------------------------------------------------------- страницы }
 
 procedure InitializeWizard;
+var
+  PortParam: string;
 begin
   PortPage := CreateInputQueryPage(wpSelectDir,
     'Параметры сервера',
     'Порт веб-интерфейса',
     'На этом порту будет доступен веб-интерфейс. По умолчанию 8080 — ' +
     'если он занят, укажите другой.');
+
+  { /PORT=12345 — для тихой установки из GPO: в диалоге порт не спросить. }
+  PortParam := ExpandConstant('{param:PORT|8080}');
+  PortValue := StrToIntDef(PortParam, 8080);
+  if (PortValue < 1) or (PortValue > 65535) then
+    PortValue := 8080;
+
   PortPage.Add('Порт:', False);
-  PortPage.Values[0] := '8080';
+  PortPage.Values[0] := IntToStr(PortValue);
 end;
 
 function GetPort(Param: string): string;
@@ -254,10 +380,27 @@ begin
   WriteEnvJson;
   WritePortFile;
 
-  { Служба: автозапуск, перезапуск при падении. }
-  BinPath := '"' + ExpandConstant('{app}\BackupDotNet.exe') + '" --service';
+  { Настройки пишем до создания службы: приложение читает порт и каталог
+    данных из settings.json, и без файла оно возьмёт умолчания. }
+  if not WriteSettingsJson then
+  begin
+    MsgBox('Не удалось записать config\settings.json. Без него служба ' +
+      'возьмёт порт 8080 и каталог данных по умолчанию.', mbError, MB_OK);
+    Exit;
+  end;
+
+#ifdef MyNoService
+  { Тестовый режим сборки: служба, firewall и urlacl не создаются.
+    Нужен, чтобы проверять установку и удаление без прав администратора. }
+#else
+  { Служба: автозапуск, перезапуск при падении.
+    Кавычки вокруг всего значения binPath обязательны: иначе sc.exe
+    разбирает «--service» как отдельный параметр, и служба создаётся
+    без аргумента — приложение запускается в консольном режиме и падает.
+    Внутренние кавычки экранируются обратной косой. }
+  BinPath := '\"' + ExpandConstant('{app}\BackupDotNet.exe') + '\" --service';
   if not RunHidden(ExpandConstant('{sys}\sc.exe'),
-      'create "{#MyServiceName}" binPath= ' + BinPath + ' start= auto', Code) then
+      'create "{#MyServiceName}" binPath= "' + BinPath + '" start= auto', Code) then
   begin
     MsgBox('Не удалось создать службу. Код: ' + IntToStr(Code), mbError, MB_OK);
     Exit;
@@ -278,29 +421,54 @@ begin
     'http add urlacl url=http://+:' + IntToStr(PortValue) + '/ user="NT AUTHORITY\SYSTEM"', Code);
 
   RunHidden(ExpandConstant('{sys}\sc.exe'), 'start "{#MyServiceName}"', Code);
+#endif
 
-  { Даём службе подняться и проверяем, что она действительно работает. }
-  Sleep(3000);
-  if RunHidden(ExpandConstant('{sys}\sc.exe'), 'query "{#MyServiceName}"', Code) then
+#ifndef MyNoService
+  { Проверяем, что служба действительно работает, а не просто создана.
+    Раньше мастер бодро писал «готово», даже когда служба падала через
+    секунду — и человек искал причину сам. }
+  Sleep(4000);
+  if not ServiceIsRunning('{#MyServiceName}') then
   begin
-    if Code <> 0 then
-      MsgBox('Служба установлена, но не запустилась. Проверьте журнал: ' +
-        '{#MyDataDir}\logs', mbInformation, MB_OK);
+    MsgBox('Служба установлена, но не запустилась.' + #13#10 + #13#10 +
+      'Проверьте журнал:' + #13#10 +
+      '{#MyDataDir}\logs' + #13#10 + #13#10 +
+      'Частая причина — порт ' + IntToStr(PortValue) + ' занят другим ' +
+      'приложением. Запустите установщик снова и укажите другой порт.',
+      mbError, MB_OK);
   end;
+#endif
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Code: Integer;
 begin
+  { Порт читаем ДО удаления файлов: install-port.txt попадает в список
+    удаляемых файлов, и в usPostUninstall его уже может не быть. }
+  if CurUninstallStep = usUninstall then
+  begin
+    UninstallPort := ReadPortFile;
+
+    { Службу снимаем здесь: дожидаемся остановки, иначе её процесс держит
+      BackupDotNet.exe и Inno не сможет удалить файлы — каталог останется. }
+    if StopServiceAndWait('{#MyServiceName}') then
+      RunHidden(ExpandConstant('{sys}\sc.exe'), 'delete "{#MyServiceName}"', Code)
+    else
+      MsgBox('Служба {#MyServiceName} не остановилась за 15 секунд. ' +
+        'Файлы могут остаться на диске — остановите службу вручную и ' +
+        'удалите каталог.', mbInformation, MB_OK);
+    Exit;
+  end;
+
   if CurUninstallStep = usPostUninstall then
   begin
     { Правило firewall и резервация urlacl остались бы висеть после удаления.
-      Без второй порт 8080 был бы навсегда закреплён за SYSTEM, и запустить
-      агент консолью от обычного пользователя стало бы невозможно. }
+      Без второй порт остался бы закреплён за SYSTEM, и запустить агент
+      консолью от обычного пользователя стало бы невозможно. }
     RunHidden(ExpandConstant('{sys}\netsh.exe'),
       'advfirewall firewall delete rule name="{#MyProductName}"', Code);
     RunHidden(ExpandConstant('{sys}\netsh.exe'),
-      'http delete urlacl url=http://+:' + IntToStr(ReadPortFile) + '/', Code);
+      'http delete urlacl url=http://+:' + IntToStr(UninstallPort) + '/', Code);
   end;
 end;

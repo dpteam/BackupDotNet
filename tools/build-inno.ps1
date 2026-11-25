@@ -43,7 +43,8 @@ if (-not $iscc) {
 Write-Host "Компилятор: $iscc"
 
 # --- брендинг ---------------------------------------------------------------
-$brandSrc = Join-Path $root $Branding
+# Путь может быть относительным (от корня репозитория) или абсолютным.
+$brandSrc = if ([System.IO.Path]::IsPathRooted($Branding)) { $Branding } else { Join-Path $root $Branding }
 if (-not (Test-Path $brandSrc)) {
     throw "нет файла брендинга: $brandSrc"
 }

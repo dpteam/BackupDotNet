@@ -95,6 +95,26 @@ public static class Program
 		}
 		string root = AppDomain.CurrentDomain.BaseDirectory;
 		string mode = ((args.Length > 0) ? args[0].ToLowerInvariant() : "console");
+
+		// Служба без аргумента: так бывает, если binPath создали без
+		// «--service» (например, вручную или старым установщиком). Раньше
+		// процесс молча запускался в консольном режиме, падал на порту
+		// и не оставлял внятного следа. Определяем по наличию
+		// config/remote.json, агент это или сервер.
+		if (args.Length == 0 && !Environment.UserInteractive)
+		{
+			bool isRemote = false;
+			try
+			{
+				isRemote = File.Exists(Path.Combine(root, "config", "remote.json"));
+			}
+			catch
+			{
+			}
+			mode = isRemote ? "--service-remote" : "--service";
+			Diag("запуск без аргументов в неинтерактивном режиме: " +
+				"считаю, что это служба (" + mode + ")");
+		}
 		try
 		{
 			Branding.SetCurrent(Branding.For(Path.Combine(root, "config")));
