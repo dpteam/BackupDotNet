@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Windows.Forms;
 using BackupDotNet.Core;
 
@@ -20,8 +21,32 @@ namespace BackupDotNet.Setup;
 /// </summary>
 internal static class Program
 {
-	/// <summary>Версия установщика (совпадает с версией продукта).</summary>
-	public const string SetupVersion = "1.0.1";
+	/// <summary>
+	/// Версия установщика. Берётся из сборки (Directory.Build.props), а не
+	/// пишется руками: иначе при выпуске версии установщик продолжает
+	/// представляться прошлой, и это видно только в окне.
+	/// </summary>
+	public static readonly string SetupVersion = ResolveVersion();
+
+	private static string ResolveVersion()
+	{
+		try
+		{
+			Assembly asm = typeof(Program).Assembly;
+			string info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+			if (!string.IsNullOrEmpty(info))
+			{
+				int plus = info.IndexOf('+');
+				return plus > 0 ? info.Substring(0, plus) : info;
+			}
+			Version v = asm.GetName().Version;
+			return (v == null) ? "1.0.0" : (v.Major + "." + v.Minor + "." + v.Build);
+		}
+		catch
+		{
+			return "1.0.0";
+		}
+	}
 
 	[STAThread]
 	private static int Main(string[] args)

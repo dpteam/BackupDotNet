@@ -33,6 +33,21 @@ if (-not (Test-Path $agentExe)) {
     throw "нет собранного агента: $agentExe (сначала build.cmd)"
 }
 
+# Версия в bin и в свежей сборке должны совпадать. Иначе легко упаковать
+# установщик со старым агентом: bin обновляет только build.cmd, а dotnet build
+# кладёт результат в src\...\bin\Release. Ошибка молчаливая и дорогая —
+# в релиз уезжает прошлая версия.
+$builtExe = Join-Path $root 'src\BackupDotNet.App\bin\Release\BackupDotNet.exe'
+if (Test-Path $builtExe) {
+    $binVer = (Get-Item $agentExe).VersionInfo.FileVersion
+    $builtVer = (Get-Item $builtExe).VersionInfo.FileVersion
+    if ($binVer -ne $builtVer) {
+        throw ("агент в bin устарел: bin={0}, сборка={1}. Запустите build.cmd, " +
+            "иначе установщик упакует старую версию.") -f $binVer, $builtVer
+    }
+    Write-Host "  агент: версия $binVer"
+}
+
 Write-Host "Собираю пакет в $out ..."
 if (Test-Path $out) {
     Remove-Item $out -Recurse -Force
