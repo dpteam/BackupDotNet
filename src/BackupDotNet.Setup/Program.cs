@@ -201,6 +201,20 @@ internal static class Program
 				}
 			},
 
+			// Подключение по RDP: когда сетевые способы недоступны, человек
+			// заходит на машину и запускает скрипт руками.
+			{ "/api/rdp/open", delegate (string body)
+				{
+					Dictionary<string, object> d = ParseJson(body);
+					RdpLauncher.Outcome outcome = RdpLauncher.Prepare(
+						Json.GetStr(d, "host", "").Trim(),
+						Json.GetStr(d, "user", "").Trim(),
+						Json.Bool(Json.Get(d, "adminSession"), dflt: false),
+						Json.Bool(Json.Get(d, "launch"), dflt: true));
+					return Json.Write(outcome.ToJson());
+				}
+			},
+
 			// Запуск установки: отвечает сразу, дальше страница опрашивает прогресс.
 			{ "/api/install/local", delegate (string body)
 				{

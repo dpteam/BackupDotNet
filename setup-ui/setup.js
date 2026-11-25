@@ -405,6 +405,48 @@
     out.style.color = 'var(--ink-soft)';
   }
 
+  /**
+   * Открывает RDP к цели и кладёт скрипт в буфер: человеку останется
+   * ввести пароль и вставить текст.
+   */
+  function openRdp() {
+    var host = $('rm-host').value.trim();
+    if (!host) {
+      toastLine('укажите компьютер');
+      return;
+    }
+
+    var btn = $('rm-rdp');
+    var old = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Открываю…';
+
+    // Скрипт копируем ДО запуска RDP: если подключение развернётся на весь
+    // экран, взять текст из установщика будет уже неудобно.
+    var scriptText = ($('rm-fix-text') || {}).textContent || '';
+    if (scriptText) {
+      copyFixScript();
+    }
+
+    api('/api/rdp/open', { method: 'POST', body: {
+      host: host,
+      user: $('rm-user').value.trim(),
+      adminSession: true,
+      launch: true
+    } }).then(function (r) {
+      var text = r.message || '';
+      if (scriptText) {
+        text += ' Скрипт в буфере обмена: вставьте в PowerShell от имени администратора.';
+      }
+      toastLine(text);
+    }).catch(function (err) {
+      toastLine('Ошибка RDP: ' + err.message);
+    }).then(function () {
+      btn.disabled = false;
+      btn.innerHTML = old;
+    });
+  }
+
   /** Кнопка «Далее» активна, если для сетевого режима связь проверена. */
   function updateNextState() {
     if (state.step !== 3) return;
@@ -710,6 +752,7 @@
     $('rm-retest').addEventListener('click', testRemote);
     $('rm-fix-copy').addEventListener('click', copyFixScript);
     $('rm-fix-save').addEventListener('click', saveFixScript);
+    $('rm-rdp').addEventListener('click', openRdp);
     $('rm-fix-format').addEventListener('change', loadFixScript);
 
     // Правка полей удалённой установки сбрасывает проверку: связь могла

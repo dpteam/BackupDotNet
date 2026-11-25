@@ -202,6 +202,7 @@
           <div style="display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap">
             <button class="btn" id="rm-test"><i class="fas fa-stethoscope"></i> Проверить связь</button>
             <button class="btn hidden" id="rm-retest"><i class="fas fa-sync-alt"></i> Повторить проверку</button>
+            <button class="btn" id="rm-rdp"><i class="fas fa-desktop"></i> Зайти по RDP</button>
             <span class="muted" style="font-size:11.5px" id="rm-test-result"></span>
           </div>
         </div>
@@ -239,6 +240,14 @@
               Скрипт нужно выполнить <b>на целевой машине</b> от имени администратора:
               через RDP, консоль или GPO. Из установщика он не запускается — доступа
               к машине как раз и нет.
+            </div>
+          </div>
+          <div class="note" style="margin-bottom:10px">
+            <i class="fas fa-lightbulb"></i>
+            <div>
+              Кнопка <b>«Зайти по RDP»</b> выше открывает подключение к цели и кладёт
+              скрипт в буфер обмена: останется ввести пароль, вставить и выполнить.
+              Пароль вводится в окне Windows и никуда не сохраняется.
             </div>
           </div>
           <pre class="fix-script" id="rm-fix-text"></pre>
