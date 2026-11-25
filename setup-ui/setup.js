@@ -1,0 +1,417 @@
+/* ==========================================================================
+   Логика мастера установки.
+
+   Общается с движком по HTTP (локальный сервер внутри установщика), поэтому
+   страница остаётся обычной: её можно открыть и в браузере для отладки.
+   ========================================================================== */
+
+(function () {
+  'use strict';
+
+  var state = {
+    step: 1,
+    env: null,
+    session: null,
+    mode: 'local',
+    installing: false,
+    pollTimer: null
+  };
+
+  // ---------------------------------------------------------------- утилиты
+
+  function $(id) { return document.getElementById(id); }
+
+  function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function api(path, opts) {
+    opts = opts || {};
+    var init = { method: opts.method || 'GET', headers: {} };
+    if (opts.body) {
+      init.headers['Content-Type'] = 'application/json';
+      init.body = JSON.stringify(opts.body);
+    }
+    return fetch(path, init).then(function (r) {
+      return r.text().then(function (t) {
+        var data = null;
+        try { data = t ? JSON.parse(t) : null; } catch (e) { data = null; }
+        if (!r.ok) {
+          throw new Error((data && data.error) || ('HTTP ' + r.status));
+        }
+        return data;
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------- шаги
+
+  var STEPS = 5;
+
+  function go(step) {
+    if (step < 1 || step > STEPS) return;
+    state.step = step;
+
+    for (var i = 1; i <= STEPS; i++) {
+      var pane = $('pane-' + i);
+      if (pane) pane.classList.toggle('active', i === step);
+    }
+
+    var items = document.querySelectorAll('.step');
+    for (var j = 0; j < items.length; j++) {
+      var n = parseInt(items[j].getAttribute('data-step'), 10);
+      items[j].classList.toggle('active', n === step);
+      items[j].classList.toggle('done', n < step);
+    }
+
+    var back = $('btn-back');
+    var next = $('btn-next');
+    back.disabled = step === 1 || state.installing;
+    back.classList.toggle('hidden', step === 5);
+
+    if (step === 4) {
+      next.textContent = 'Установить';
+      runPreflight();
+    } else if (step === 5) {
+      next.classList.add('hidden');
+      back.classList.add('hidden');
+    } else {
+      next.innerHTML = 'Далее';
+      next.classList.remove('hidden');
+      back.classList.remove('hidden');
+    }
+
+    if (step === 1) $('foot-hint').textContent = '';
+    if (step === 2) $('foot-hint').textContent = 'Способ можно поменять до установки';
+    if (step === 3) $('foot-hint').textContent = 'Пути можно оставить по умолчанию';
+    if (step === 4) $('foot-hint').textContent = 'Проверка ничего не меняет';
+    if (step === 5) $('foot-hint').textContent = '';
+  }
+
+  // ---------------------------------------------------------------- шаг 1
+
+  function loadEnv() {
+    return api('/api/env').then(function (env) {
+      state.env = env;
+      return api('/api/session').then(function (s) {
+        state.session = s;
+        env.setupVersion = (s && s.setupVersion) || '';
+        renderEnv(env);
+        renderPayload(s);
+      });
+    }).catch(function (err) {
+      $('env-facts').innerHTML =
+        '<div class="fact"><div class="fact-k">Ошибка</div>' +
+        '<div class="fact-v">' + esc(err.message) + '</div></div>';
+    });
+  }
+
+  function renderEnv(env) {
+    $('top-version').textContent = 'v' + (env.setupVersion || '');
+
+    var facts = [
+      ['Компьютер', env.machineName],
+      ['Пользователь', env.userName],
+      ['Права', env.isAdmin ? 'администратор' : 'обычные'],
+      ['ОС', env.osVersion],
+      ['Домен', env.isDomainJoined ? 'в домене' : 'рабочая группа'],
+      ['WebView2', env.webview2 && env.webview2.found
+        ? env.webview2.version
+        : 'не найден']
+    ];
+
+    $('env-facts').innerHTML = facts.map(function (f) {
+      return '<div class="fact"><div class="fact-k">' + esc(f[0]) + '</div>' +
+        '<div class="fact-v">' + esc(f[1] || '—') + '</div></div>';
+    }).join('');
+
+    var notes = '';
+    if (!env.isAdmin) {
+      notes += '<div class="note fail"><i class="fas fa-circle-exclamation"></i>' +
+        '<div><b>Нет прав администратора.</b> Установщик запущен без повышения — ' +
+        'создать службу не получится. Закройте мастер и запустите ' +
+        '<code>BackupDotNet.Setup.exe</code> от имени администратора.</div></div>';
+    }
+    if (env.existing && env.existing.found) {
+      notes += '<div class="note warn"><i class="fas fa-triangle-exclamation"></i>' +
+        '<div><b>Агент уже установлен на этой машине.</b> ' +
+        'Найденное: ' + esc((env.existing.folders || []).join(', ') || '—') +
+        (env.existing.services && env.existing.services.length
+          ? ', службы: ' + esc(env.existing.services.join(', ')) : '') +
+        '. Установка перезапишет файлы, конфигурация останется прежней.</div></div>';
+    }
+    if (!env.isDomainJoined) {
+      notes += '<div class="note"><i class="fas fa-circle-info"></i>' +
+        '<div>Машина в рабочей группе. Установка по сети потребует ' +
+        '<code>TrustedHosts</code> на цели — мастер предложит это позже.</div></div>';
+    }
+    $('env-notes').innerHTML = notes;
+
+    // Значения по умолчанию для формы.
+    var d = env.defaults || {};
+    if ($('install-dir') && !$('install-dir').value) $('install-dir').value = d.installDir || '';
+    if ($('data-dir') && !$('data-dir').value) $('data-dir').value = d.dataDir || '';
+    if ($('service-name') && !$('service-name').value) $('service-name').value = d.serviceName || '';
+    if ($('port') && !$('port').value) $('port').value = d.port || 8080;
+  }
+
+  function renderPayload(session) {
+    var box = $('payload-box');
+    if (!box) return;
+
+    if (session && session.payloadReady) {
+      box.innerHTML =
+        '<div class="note ok" style="margin-bottom:0"><i class="fas fa-circle-check"></i>' +
+        '<div><b>Пакет на месте.</b> Версия агента: ' +
+        esc(session.payloadVersion || 'неизвестна') + '.<br>' +
+        'Источник: <code>' + esc(session.payloadDir) + '</code></div></div>';
+    } else {
+      box.innerHTML =
+        '<div class="note fail" style="margin-bottom:0"><i class="fas fa-circle-exclamation"></i>' +
+        '<div><b>Файлы агента не найдены.</b> Рядом с установщиком нужен каталог ' +
+        '<code>payload</code> с <code>BackupDotNet.exe</code>. ' +
+        'Распакуйте архив целиком.</div></div>';
+    }
+  }
+
+  // ---------------------------------------------------------------- шаг 2
+
+  function selectMode(mode) {
+    state.mode = mode;
+    var modes = document.querySelectorAll('.mode');
+    for (var i = 0; i < modes.length; i++) {
+      modes[i].classList.toggle('sel', modes[i].getAttribute('data-mode') === mode);
+    }
+
+    var isLocal = mode === 'local';
+    $('form-local').classList.toggle('hidden', !isLocal);
+    $('form-remote').classList.toggle('hidden', isLocal);
+
+    $('pane3-lead').textContent = isLocal
+      ? 'Куда поставить агент и как назвать службу.'
+      : 'Установка по сети появится следующим шагом.';
+
+    // Кнопка «Далее» недоступна для нереализованных режимов.
+    var next = $('btn-next');
+    if (state.step === 2) {
+      next.disabled = !isLocal;
+      next.title = isLocal ? '' : 'Этот способ ещё в работе';
+    }
+  }
+
+  // ---------------------------------------------------------------- шаг 4
+
+  function collectRequest() {
+    return {
+      mode: 'local',
+      installDir: $('install-dir').value.trim(),
+      dataDir: $('data-dir').value.trim(),
+      serviceName: $('service-name').value.trim(),
+      port: parseInt($('port').value, 10) || 8080,
+      overwriteConfig: $('overwrite-config').checked
+    };
+  }
+
+  function runPreflight() {
+    var list = $('plan-list');
+    list.innerHTML = '<li class="check-item"><i class="fas fa-spinner fa-spin"></i>' +
+      '<div class="check-text">Проверяю условия…</div></li>';
+
+    api('/api/preflight', { method: 'POST', body: collectRequest() })
+      .then(function (p) {
+        renderPreflight(p);
+      })
+      .catch(function (err) {
+        list.innerHTML = '<li class="check-item fail"><i class="fas fa-circle-exclamation"></i>' +
+          '<div class="check-text">Ошибка проверки: ' + esc(err.message) + '</div></li>';
+      });
+  }
+
+  function renderPreflight(p) {
+    var req = collectRequest();
+    var rows = [];
+
+    // Что будет сделано — списком, чтобы человек понимал масштаб.
+    var planned = [
+      ['Создать каталоги', esc(req.installDir) + ' и ' + esc(req.dataDir)],
+      ['Скопировать файлы', 'из пакета в каталог программы'],
+      ['Создать конфигурацию', 'из шаблонов *.example.json'],
+      ['Зарегистрировать службу', esc(req.serviceName) + ' с автозапуском'],
+      ['Открыть порт', 'firewall и urlacl для ' + req.port],
+      ['Запустить и проверить', 'ответ /api/health на порту ' + req.port]
+    ];
+
+    planned.forEach(function (row) {
+      rows.push('<li class="check-item"><i class="fas fa-angle-right" style="color:var(--muted)"></i>' +
+        '<div class="check-text">' + esc(row[0]) +
+        '<div class="check-detail">' + row[1] + '</div></div></li>');
+    });
+
+    $('plan-list').innerHTML = rows.join('');
+
+    var notes = '';
+    (p.problems || []).forEach(function (t) {
+      notes += '<div class="note fail"><i class="fas fa-circle-exclamation"></i>' +
+        '<div>' + esc(t) + '</div></div>';
+    });
+    (p.warnings || []).forEach(function (t) {
+      notes += '<div class="note warn"><i class="fas fa-triangle-exclamation"></i>' +
+        '<div>' + esc(t) + '</div></div>';
+    });
+    if (p.ok && !(p.warnings || []).length) {
+      notes = '<div class="note ok"><i class="fas fa-circle-check"></i>' +
+        '<div>Всё готово. Можно устанавливать.</div></div>';
+    }
+    $('preflight-notes').innerHTML = notes;
+
+    $('btn-next').disabled = !p.ok;
+    $('btn-next').title = p.ok ? '' : 'Есть препятствия — см. выше';
+  }
+
+  // ---------------------------------------------------------------- шаг 5
+
+  function startInstall() {
+    state.installing = true;
+    go(5);
+
+    $('install-title').textContent = 'Установка';
+    $('install-lead').textContent = 'Не закрывайте окно. Обычно занимает до минуты.';
+    $('done-box').classList.add('hidden');
+    $('bar').style.width = '0%';
+    $('progress-step').textContent = 'Готовлюсь…';
+    $('install-log').textContent = '';
+
+    api('/api/install/local', { method: 'POST', body: collectRequest() })
+      .then(function (r) {
+        if (!r.ok) {
+          appendLog('Ошибка: ' + (r.error || r.message));
+          finish(false, r);
+          return;
+        }
+        poll();
+      })
+      .catch(function (err) {
+        appendLog('Ошибка: ' + err.message);
+        finish(false, { message: err.message });
+      });
+  }
+
+  function poll() {
+    clearTimeout(state.pollTimer);
+    api('/api/progress').then(function (p) {
+      if (p.step) $('progress-step').textContent = p.step;
+      if (typeof p.percent === 'number') $('bar').style.width = Math.max(0, Math.min(100, p.percent)) + '%';
+      if (p.log) $('install-log').textContent = p.log;
+
+      if (p.done) {
+        finish(p.ok, p.result || {});
+        return;
+      }
+      state.pollTimer = setTimeout(poll, 500);
+    }).catch(function () {
+      state.pollTimer = setTimeout(poll, 1200);
+    });
+  }
+
+  function appendLog(text) {
+    var box = $('install-log');
+    if (box) box.textContent = (box.textContent ? box.textContent + '\n' : '') + text;
+  }
+
+  function finish(ok, result) {
+    state.installing = false;
+    $('bar').style.width = '100%';
+    $('progress-step').textContent = ok ? 'Готово' : 'Установка не завершена';
+
+    if (!ok) {
+      $('install-title').textContent = 'Установка не завершена';
+      $('install-lead').textContent = 'Ниже — что именно не получилось.';
+      $('done-box').classList.add('hidden');
+      var back = $('btn-back');
+      back.classList.remove('hidden');
+      back.textContent = 'Вернуться к параметрам';
+      back.disabled = false;
+      back.onclick = function () {
+        back.onclick = null;
+        back.textContent = 'Назад';
+        go(3);
+      };
+      return;
+    }
+
+    $('install-title').textContent = 'Установка завершена';
+    $('install-lead').textContent = '';
+    $('done-box').classList.remove('hidden');
+    $('done-sub').textContent = result.message || '';
+
+    var kv = [];
+    var req = collectRequest();
+    kv.push(['Каталог', req.installDir]);
+    kv.push(['Служба', req.serviceName]);
+    kv.push(['Порт', String(req.port)]);
+    if (result.warnings && result.warnings.length) {
+      kv.push(['Замечания', result.warnings.join('; ')]);
+    }
+    $('done-kv').innerHTML = kv.map(function (r) {
+      return '<div class="k">' + esc(r[0]) + '</div><div class="v">' + esc(r[1]) + '</div>';
+    }).join('');
+
+    var back = $('btn-back');
+    back.classList.remove('hidden');
+    back.textContent = 'Закрыть мастер';
+    back.disabled = false;
+    back.onclick = function () {
+      back.onclick = null;
+      api('/api/close', { method: 'POST', body: {} }).catch(function () {});
+      back.textContent = 'Мастер можно закрыть';
+      back.disabled = true;
+    };
+
+    // Ссылка на веб-интерфейс.
+    var link = document.createElement('div');
+    link.className = 'note ok';
+    link.style.marginTop = '14px';
+    link.innerHTML = '<i class="fas fa-circle-check"></i><div>' +
+      'Открыть веб-интерфейс: <a href="http://localhost:' + req.port +
+      '/" target="_blank">http://localhost:' + req.port + '/</a></div>';
+    $('done-box').appendChild(link);
+  }
+
+  // ---------------------------------------------------------------- события
+
+  function bind() {
+    $('btn-next').addEventListener('click', function () {
+      if (state.step === 4) {
+        startInstall();
+        return;
+      }
+      go(state.step + 1);
+    });
+
+    $('btn-back').addEventListener('click', function () {
+      if (state.step === 5) return;
+      go(state.step - 1);
+    });
+
+    var modes = document.querySelectorAll('.mode');
+    for (var i = 0; i < modes.length; i++) {
+      modes[i].addEventListener('click', function (e) {
+        e.preventDefault();
+        selectMode(this.getAttribute('data-mode'));
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------- старт
+
+  document.addEventListener('DOMContentLoaded', function () {
+    bind();
+    selectMode('local');
+    loadEnv().then(function () {
+      go(1);
+    });
+  });
+})();

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Установка DPT.Backup</title>
+<link rel="stylesheet" href="vendor/fa/css/all.min.css">
+<link rel="stylesheet" href="setup.css">
+</head>
+<body>
+
+<header class="top">
+  <img class="top-logo" src="setup-icon.png" alt="">
+  <div>
+    <div class="top-title">Установка DPT.Backup</div>
+    <div class="top-sub">Мониторинг бэкапов, доступности и железа</div>
+  </div>
+  <span class="spacer"></span>
+  <span class="top-version" id="top-version"></span>
+</header>
+
+<nav class="steps" id="steps">
+  <div class="step" data-step="1"><span class="step-dot">1</span> Начало</div>
+  <span class="step-line"></span>
+  <div class="step" data-step="2"><span class="step-dot">2</span> Способ</div>
+  <span class="step-line"></span>
+  <div class="step" data-step="3"><span class="step-dot">3</span> Параметры</div>
+  <span class="step-line"></span>
+  <div class="step" data-step="4"><span class="step-dot">4</span> Проверка</div>
+  <span class="step-line"></span>
+  <div class="step" data-step="5"><span class="step-dot">5</span> Установка</div>
+</nav>
+
+<main>
+
+  <!-- ============================================ 1. Начало -->
+  <section class="pane active" id="pane-1">
+    <h1>Добро пожаловать</h1>
+    <p class="lead">
+      Мастер поставит агент мониторинга на эту машину или разложит его по сети.
+      Ничего не изменится, пока вы не нажмёте «Установить»: сначала покажем,
+      что будет сделано.
+    </p>
+
+    <div class="card">
+      <div class="card-head"><i class="fas fa-microchip"></i> Эта машина
+        <span class="spacer"></span>
+        <span style="font-size:11px;color:var(--muted)" id="env-summary"></span>
+      </div>
+      <div class="card-body">
+        <div class="facts" id="env-facts">
+          <div class="fact"><div class="fact-k">Загрузка…</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><i class="fas fa-box"></i> Пакет установки</div>
+      <div class="card-body" id="payload-box">
+        <div class="fact-k">Проверяю…</div>
+      </div>
+    </div>
+
+    <div id="env-notes"></div>
+  </section>
+
+  <!-- ============================================ 2. Способ -->
+  <section class="pane" id="pane-2">
+    <h1>Как устанавливаем</h1>
+    <p class="lead">Выберите, куда ставить агент.</p>
+
+    <div class="modes" id="modes">
+      <label class="mode sel" data-mode="local">
+        <input type="radio" name="mode" value="local" checked>
+        <div class="mode-title"><i class="fas fa-desktop"></i> На эту машину</div>
+        <div class="mode-desc">
+          Обычная установка службы. Всё видно сразу: файлы, служба, порт.
+          Нужны права администратора.
+        </div>
+        <span class="mode-tag">работает сейчас</span>
+      </label>
+
+      <label class="mode" data-mode="smb">
+        <input type="radio" name="mode" value="smb">
+        <div class="mode-title"><i class="fas fa-folder-open"></i> По сети (SMB)</div>
+        <div class="mode-desc">
+          Копирование через админ-шару <code>ADMIN$</code> и запуск службы
+          удалённо. Работает там, где WinRM отключён политикой.
+        </div>
+        <span class="mode-tag soon">следующий шаг</span>
+      </label>
+
+      <label class="mode" data-mode="winrm">
+        <input type="radio" name="mode" value="winrm">
+        <div class="mode-title"><i class="fas fa-terminal"></i> По сети (WinRM)</div>
+        <div class="mode-desc">
+          Штатный путь Windows: PowerShell Remoting. В рабочей группе нужен
+          TrustedHosts, в домене — права администратора на цели.
+        </div>
+        <span class="mode-tag soon">следующий шаг</span>
+      </label>
+
+      <label class="mode" data-mode="ad">
+        <input type="radio" name="mode" value="ad">
+        <div class="mode-title"><i class="fas fa-sitemap"></i> Домен (AD)</div>
+        <div class="mode-desc">
+          Поиск компьютеров в каталоге и установка на выбранные. Плюс пакет
+          для групповой политики — для машин без удалённого доступа.
+        </div>
+        <span class="mode-tag soon">следующий шаг</span>
+      </label>
+    </div>
+  </section>
+
+  <!-- ============================================ 3. Параметры -->
+  <section class="pane" id="pane-3">
+    <h1>Параметры установки</h1>
+    <p class="lead" id="pane3-lead">Куда поставить агент и как назвать службу.</p>
+
+    <!-- локальная установка -->
+    <div id="form-local">
+      <div class="card">
+        <div class="card-head"><i class="fas fa-folder"></i> Каталоги</div>
+        <div class="card-body">
+          <label class="fld">
+            <span>Каталог программы</span>
+            <input type="text" id="install-dir" spellcheck="false">
+            <small>Здесь будут exe, dll и веб-интерфейс</small>
+          </label>
+          <label class="fld">
+            <span>Каталог данных</span>
+            <input type="text" id="data-dir" spellcheck="false">
+            <small>Журналы, история, копии, конфигурация</small>
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><i class="fas fa-gear"></i> Служба и порт</div>
+        <div class="card-body">
+          <div class="grid2">
+            <label class="fld">
+              <span>Имя службы</span>
+              <input type="text" id="service-name" spellcheck="false">
+              <small>Так она будет видна в services.msc</small>
+            </label>
+            <label class="fld">
+              <span>Порт веб-интерфейса</span>
+              <input type="number" id="port" min="1" max="65535">
+              <small>Правило firewall добавим автоматически</small>
+            </label>
+          </div>
+          <label class="chk">
+            <input type="checkbox" id="overwrite-config">
+            Перезаписать существующую конфигурацию
+          </label>
+          <div class="note warn" id="overwrite-note" style="margin-bottom:0">
+            <i class="fas fa-triangle-exclamation"></i>
+            <div>Без этой галочки <code>settings.json</code> и <code>secrets.json</code>
+            останутся прежними: обновление не должно стирать настройки.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- заглушка для сетевых режимов -->
+    <div id="form-remote" class="hidden">
+      <div class="note warn">
+        <i class="fas fa-triangle-exclamation"></i>
+        <div>Установка по сети появится следующим шагом. Сейчас работает
+        установка на эту машину — она же нужна как основа для остальных.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================ 4. Проверка -->
+  <section class="pane" id="pane-4">
+    <h1>Проверка перед установкой</h1>
+    <p class="lead">Ничего ещё не изменено. Смотрим, всё ли готово.</p>
+
+    <div class="card">
+      <div class="card-head"><i class="fas fa-clipboard-check"></i> Что будет сделано</div>
+      <div class="card-body">
+        <ul class="check-list" id="plan-list">
+          <li class="check-item"><i class="fas fa-spinner fa-spin"></i>
+            <div class="check-text">Проверяю…</div></li>
+        </ul>
+      </div>
+    </div>
+
+    <div id="preflight-notes"></div>
+  </section>
+
+  <!-- ============================================ 5. Установка -->
+  <section class="pane" id="pane-5">
+    <h1 id="install-title">Установка</h1>
+    <p class="lead" id="install-lead">Не закрывайте окно.</p>
+
+    <div class="card">
+      <div class="card-head"><i class="fas fa-gears"></i> Ход установки</div>
+      <div class="card-body">
+        <div class="progress-wrap"><div class="progress-bar" id="bar"></div></div>
+        <div class="progress-step" id="progress-step">Готовлюсь…</div>
+        <div class="log" id="install-log"></div>
+      </div>
+    </div>
+
+    <div id="done-box" class="hidden">
+      <div class="card">
+        <div class="done-hero">
+          <div class="ico"><i class="fas fa-circle-check"></i></div>
+          <h2>Агент установлен</h2>
+          <p id="done-sub"></p>
+        </div>
+        <div class="card-body">
+          <div class="kv" id="done-kv"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <span class="hint" id="foot-hint"></span>
+  <span class="spacer"></span>
+  <button class="btn" id="btn-back">Назад</button>
+  <button class="btn btn-primary" id="btn-next">Далее</button>
+</footer>
+
+<script src="setup.js"></script>
+</body>
+</html>

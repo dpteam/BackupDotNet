@@ -1,0 +1,559 @@
+/* ==========================================================================
+   Мастер установки DPT.Backup.
+
+   Палитра и типографика — те же, что у веб-интерфейса: установщик должен
+   выглядеть частью продукта, а не отдельной утилитой. Файл самодостаточный:
+   мастер не зависит от public/css/app.css, чтобы работал, даже если рядом
+   лежит только setup-ui.
+   ========================================================================== */
+
+:root {
+  --brand: #0088FF;
+  --brand-deep: #0080FF;
+  --brand-dark: #004CCC;
+  --brand-soft: rgba(0, 136, 255, .12);
+  --navy: #000088;
+
+  --bg: #0b1220;
+  --surface: #121a2b;
+  --surface-alt: #172032;
+  --border: #24314a;
+  --border-soft: #1c2740;
+
+  --ink: #e8eefc;
+  --ink-soft: #96a8c3;
+  --muted: #6b7f9e;
+
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --fail: #ef4444;
+  --ok-bg: rgba(34, 197, 94, .12);
+  --warn-bg: rgba(245, 158, 11, .12);
+  --fail-bg: rgba(239, 68, 68, .12);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* WebView2 по умолчанию рисует полосу прокрутки во всю высоту окна:
+   на тёмной теме она выглядит как светлая полоса. Красим под тему. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+  border: 2px solid var(--bg);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* ---------------------------------------------------------------- шапка */
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #101a2e, #0d1526);
+  flex: 0 0 auto;
+}
+
+.top-logo {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  /* Иконка тёмная по краям: на тёмной шапке нужен лёгкий подсвет */
+  filter: drop-shadow(0 0 6px rgba(0, 136, 255, .35));
+}
+
+.top-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: .2px;
+}
+
+.top-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.top .spacer { flex: 1; }
+
+.top-version {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: Consolas, "Courier New", monospace;
+}
+
+/* ---------------------------------------------------------------- шаги */
+
+.steps {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--surface);
+  flex: 0 0 auto;
+  overflow-x: auto;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.step-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.step.active { color: var(--ink); }
+.step.active .step-dot {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.step.done .step-dot {
+  border-color: var(--ok);
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.step-line {
+  width: 26px;
+  height: 1px;
+  background: var(--border);
+  margin: 0 8px;
+  flex: 0 0 auto;
+}
+
+/* ---------------------------------------------------------------- тело */
+
+main {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 22px;
+  /* Место под полосу прокрутки резервируем всегда: иначе при её появлении
+     содержимое прыгает на 10 пикселей. */
+  scrollbar-gutter: stable;
+}
+
+.pane { display: none; max-width: 900px; margin: 0 auto; }
+.pane.active { display: block; }
+
+h1 {
+  font-size: 19px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.lead {
+  color: var(--ink-soft);
+  margin: 0 0 18px;
+  font-size: 12.5px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: var(--surface-alt);
+}
+
+.card-head i { color: var(--brand); }
+.card-head .spacer { flex: 1; }
+
+.card-body { padding: 14px; }
+
+/* ---------------------------------------------------------------- формы */
+
+.fld { display: block; margin-bottom: 12px; }
+
+.fld > span {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin-bottom: 4px;
+}
+
+.fld input, .fld select {
+  width: 100%;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  outline: none;
+}
+
+.fld input:focus, .fld select:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+.fld small {
+  display: block;
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+}
+
+@media (max-width: 760px) {
+  .grid2 { grid-template-columns: 1fr; }
+}
+
+.chk {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.chk input { margin: 0; }
+
+/* ---------------------------------------------------------------- выбор режима */
+
+.modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.mode {
+  display: block;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  position: relative;
+}
+
+.mode:hover { border-color: var(--brand); }
+
+.mode input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mode.sel {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.mode-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.mode-title i { color: var(--brand); }
+
+.mode-desc {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.mode-tag {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 1px 7px;
+  font-size: 10px;
+  border-radius: 3px;
+  background: var(--surface-alt);
+  color: var(--ink-soft);
+  border: 1px solid var(--border);
+}
+
+.mode-tag.soon { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
+
+/* ---------------------------------------------------------------- факты */
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.fact {
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.fact-k {
+  font-size: 10.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.fact-v {
+  font-size: 12.5px;
+  margin-top: 2px;
+  word-break: break-word;
+}
+
+/* ---------------------------------------------------------------- проверки */
+
+.check-list { margin: 0; padding: 0; list-style: none; }
+
+.check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+
+.check-item:last-child { border-bottom: 0; }
+
+.check-item i { margin-top: 2px; flex: 0 0 auto; }
+.check-item.ok i { color: var(--ok); }
+.check-item.warn i { color: var(--warn); }
+.check-item.fail i { color: var(--fail); }
+
+.check-text { flex: 1; }
+.check-detail { color: var(--muted); font-size: 11px; }
+
+/* ---------------------------------------------------------------- прогресс */
+
+.progress-wrap {
+  height: 6px;
+  background: var(--surface-alt);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 10px 0 6px;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--brand-deep), var(--brand));
+  transition: width .3s ease;
+}
+
+.progress-step {
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  min-height: 18px;
+}
+
+.log {
+  margin-top: 12px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+}
+
+/* ---------------------------------------------------------------- подвал */
+
+footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+footer .spacer { flex: 1; }
+
+footer .hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- кнопки */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color .15s, color .15s, filter .15s;
+}
+
+.btn:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
+
+.btn:disabled { opacity: .5; cursor: default; }
+
+.btn-primary {
+  background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  border-color: var(--brand-deep);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  color: #fff;
+  border-color: var(--brand-dark);
+  filter: brightness(1.08);
+}
+
+.btn-danger {
+  background: var(--fail-bg);
+  border-color: var(--fail);
+  color: var(--fail);
+}
+
+/* ---------------------------------------------------------------- плашки */
+
+.note {
+  display: flex;
+  gap: 9px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--ink-soft);
+}
+
+.note.ok { border-color: var(--ok); background: var(--ok-bg); }
+.note.warn { border-color: var(--warn); background: var(--warn-bg); }
+.note.fail { border-color: var(--fail); background: var(--fail-bg); }
+.note i { flex: 0 0 auto; margin-top: 1px; }
+.note.ok i { color: var(--ok); }
+.note.warn i { color: var(--warn); }
+.note.fail i { color: var(--fail); }
+
+.hidden { display: none !important; }
+
+code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11.5px;
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border-soft);
+}
+
+a { color: var(--brand); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ---------------------------------------------------------------- итог */
+
+.done-hero {
+  text-align: center;
+  padding: 24px 12px 8px;
+}
+
+.done-hero .ico {
+  font-size: 42px;
+  color: var(--ok);
+  margin-bottom: 10px;
+}
+
+.done-hero h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.done-hero p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  gap: 6px 14px;
+  font-size: 12px;
+}
+
+.kv .k { color: var(--muted); }
+.kv .v { color: var(--ink); word-break: break-word; }
