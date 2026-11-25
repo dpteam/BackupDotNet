@@ -16,6 +16,7 @@
     "company": "BackupDotNet",
     "description": "Мониторинг бэкапов, доступности и железа",
     "installDir": "C:\\BackupDotNet\\",
+    "agentInstallDir": "C:\\BackupDotNetAgent",
     "dataDir": "C:\\ProgramData\\BackupDotNet",
     "serviceName": "BackupDotNetService",
     "serviceNameRemote": "BackupDotNetRemote",

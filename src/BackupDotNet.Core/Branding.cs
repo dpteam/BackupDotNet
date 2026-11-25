@@ -39,6 +39,16 @@ public class Branding
 
 	public string InstallDir = "C:\\BackupDotNet\\";
 
+	/// <summary>
+	/// Каталог установки удалённого агента. Отдельный от <see cref="InstallDir"/>:
+	/// агент часто ставят на ту же машину, что сервер, и общий каталог даёт
+	/// конфликт двух служб за одни и те же файлы.
+	///
+	/// Если в брендинге не задан — выводится из <see cref="InstallDir"/>
+	/// добавлением «Agent»: <c>C:\BackupDotNet\</c> → <c>C:\BackupDotNetAgent</c>.
+	/// </summary>
+	public string AgentInstallDir = "C:\\BackupDotNetAgent";
+
 	public string DataDir = "C:\\ProgramData\\BackupDotNet";
 
 	public string ServiceName = "BackupDotNetService";
@@ -173,6 +183,7 @@ public class Branding
 			ZabbixTemplateName = Str(src, root, "zabbixTemplateName", ZabbixTemplateName);
 		}
 		InstallDir = Str(src, root, "installDir", InstallDir);
+		AgentInstallDir = Str(src, root, "agentInstallDir", InstallDir.TrimEnd('\\') + "Agent");
 		DataDir = Str(src, root, "dataDir", DataDir);
 		ServiceName = Str(src, root, "serviceName", ServiceName);
 		ServiceNameRemote = Str(src, root, "serviceNameRemote", ServiceNameRemote);
@@ -215,6 +226,7 @@ public class Branding
 		d["company"] = Company;
 		d["description"] = Description;
 		d["installDir"] = InstallDir;
+		d["agentInstallDir"] = AgentInstallDir;
 		d["dataDir"] = DataDir;
 		d["serviceName"] = ServiceName;
 		d["serviceNameRemote"] = ServiceNameRemote;

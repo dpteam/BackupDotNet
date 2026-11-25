@@ -3120,7 +3120,8 @@
         '<tr><td><code>productName</code></td><td>полное имя продукта</td><td>Acme Backup</td></tr>' +
         '<tr><td><code>company</code></td><td>издатель в свойствах exe и аудите</td><td>Acme LLC</td></tr>' +
         '<tr><td><code>footer</code>, <code>footerUrl</code></td><td>подпись внизу</td><td>acme.example</td></tr>' +
-        '<tr><td><code>installDir</code></td><td>каталог установки; из него берутся пути новых агентов</td><td>C:\\Program Files\\Acme</td></tr>' +
+        '<tr><td><code>installDir</code></td><td>каталог установки сервера</td><td>C:\\Program Files\\Acme</td></tr>' +
+        '<tr><td><code>agentInstallDir</code></td><td>каталог агента; по умолчанию <code>installDir</code> + <code>Agent</code></td><td>C:\\Program Files\\AcmeAgent</td></tr>' +
         '<tr><td><code>dataDir</code></td><td>служебный каталог (diag.log, раннер)</td><td>C:\\ProgramData\\Acme</td></tr>' +
         '<tr><td><code>serviceName</code> / <code>serviceNameRemote</code></td><td>имена служб</td><td>AcmeBackup / AcmeAgent</td></tr>' +
         '<tr><td><code>userAgent</code></td><td>как продукт представляется снаружи</td><td>AcmeBackup</td></tr>' +
@@ -8899,14 +8900,14 @@
         '</select></label>' +
         '<label class="fld"><span>Центральная машина</span>' +
         '<input type="text" id="dp-central" value="' + esc(deployState.centralUrl || st.centralUrl || '') + '" ' +
-        'placeholder="http://192.168.27.192:8080"></label>' +
+        'placeholder="' + esc(centralHint()) + '"></label>' +
         '</div>';
 
       html += '<details style="margin-top:10px"><summary class="muted" style="cursor:pointer;font-size:11.5px">' +
         'Дополнительно: каталог и имя службы</summary>' +
         '<div class="deploy-grid" style="margin-top:8px">' +
         '<label class="fld"><span>Каталог установки</span>' +
-        '<input type="text" id="dp-dir" value="' + esc(deployDefaults().installDir) + '"></label>' +
+        '<input type="text" id="dp-dir" value="' + esc(deployDefaults().agentInstallDir) + '"></label>' +
         '<label class="fld"><span>Служба</span>' +
         '<input type="text" id="dp-svc" value="' + esc(deployDefaults().serviceNameRemote) + '"></label>' +
         '</div></details>';
@@ -8919,7 +8920,7 @@
 
       html += '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' +
         'Центральная машина должна быть доступна с целевого сервера по этому адресу ' +
-        'и порту. Ставится пакет ~1.2 МБ: exe, веб-интерфейс, шаблоны и утилиты.</p>';
+        'и порту. Ставится пакет: exe со всеми сборками, веб-интерфейс, шаблоны и утилиты.</p>';
 
       html += '</div></div>';
 
@@ -9030,6 +9031,20 @@
 
       $('#dp-probe').addEventListener('click', function () { probeDeployTargets(); });
 
+      // Каталог и служба по умолчанию зависят от режима: сервер ставится
+      // в серверный каталог, агент — в отдельный. Меняем только пока поле
+      // не правили руками, иначе затрём осознанный ввод.
+      var dpMode = document.getElementById('dp-mode');
+      if (dpMode) dpMode.addEventListener('change', function () {
+        var d = deployDefaults();
+        var dirFld = document.getElementById('dp-dir');
+        if (dirFld && (!dirFld.value.trim() || dirFld.value.trim() === d.installDir || dirFld.value.trim() === d.agentInstallDir))
+          dirFld.value = (dpMode.value === 'central') ? d.installDir : d.agentInstallDir;
+        var svcFld = document.getElementById('dp-svc');
+        if (svcFld && (!svcFld.value.trim() || svcFld.value.trim() === d.serviceName || svcFld.value.trim() === d.serviceNameRemote))
+          svcFld.value = (dpMode.value === 'central') ? d.serviceName : d.serviceNameRemote;
+      });
+
       $('#dp-install').addEventListener('click', function () { deployAction('install'); });
       $('#dp-uninstall').addEventListener('click', function () { deployAction('uninstall'); });
 
@@ -9059,13 +9074,32 @@
 
   // Каталог и имя службы по умолчанию берём из бренда: у другой компании
   // не должно быть названия одной компании в путях и именах служб.
+  // Агент ставится в отдельный каталог: если поставить его в серверный,
+  // на машине, где уже есть сервер, две службы начнут делить файлы.
   function deployDefaults() {
     var b = state.branding || {};
+    var dir = b.installDir || 'C:\\Program Files\\BackupMonitor';
     return {
-      installDir: b.installDir || 'C:\\Program Files\\BackupMonitor',
+      installDir: dir,
+      agentInstallDir: b.agentInstallDir || dir.replace(/[\\]+$/, '') + 'Agent',
       serviceName: b.serviceName || 'BackupMonitor',
       serviceNameRemote: b.serviceNameRemote || 'BackupMonitorRemote'
     };
+  }
+
+  /**
+   * Подсказка для поля «Центральная машина».
+   *
+   * Зачем не константа: раньше в placeholder был захардкожен чужой адрес
+   * (192.168.27.192:8080), и человек видел порт, которого на этой установке нет.
+   * Теперь показываем сохранённый адрес, а если его нет — тот, по которому
+   * открыт интерфейс: порт там всегда настоящий.
+   */
+  function centralHint() {
+    if (deployState.savedCentralUrl) return deployState.savedCentralUrl;
+    if (state.centralUrl) return state.centralUrl;
+    if (typeof location !== 'undefined' && location.origin && location.origin !== 'null') return location.origin;
+    return '';
   }
 
   function saveDeployInputs() {    var c = $('[id="dp-central"]');

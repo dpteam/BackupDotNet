@@ -267,12 +267,22 @@ public class DeployManager
 		}
 	}
 
+	/// <summary>
+	/// Каталог установки по умолчанию для режима задания: серверный экземпляр
+	/// и удалённый агент живут в разных каталогах, иначе на одной машине две
+	/// службы делят файлы.
+	/// </summary>
+	private static string DefaultInstallDir(string mode)
+	{
+		return (mode == "central") ? Branding.Current.InstallDir : Branding.Current.AgentInstallDir;
+	}
+
 	private void RunInstall(DeployJob job, DeployOptions o)
 	{
 		job.SetPhase("подключение", 3);
 		if (string.IsNullOrEmpty(o.InstallDir))
 		{
-			o.InstallDir = Branding.Current.InstallDir;
+			o.InstallDir = DefaultInstallDir(o.Mode);
 		}
 		if (string.IsNullOrEmpty(o.ServiceName))
 		{
@@ -402,7 +412,7 @@ public class DeployManager
 		job.SetPhase("подключение", 5);
 		if (string.IsNullOrEmpty(o.InstallDir))
 		{
-			o.InstallDir = Branding.Current.InstallDir;
+			o.InstallDir = DefaultInstallDir("agent");
 		}
 		if (string.IsNullOrEmpty(o.ServiceName))
 		{
