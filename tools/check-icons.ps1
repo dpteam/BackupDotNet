@@ -14,7 +14,6 @@ param(
     [string]$PublicDir = "public",
     [string]$CssPath = "public/vendor/fa/css/all.min.css"
 )
-
 $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path $CssPath)) {
@@ -31,8 +30,15 @@ $modifiers = @('fa-spin', 'fa-pulse', 'fa-fw', 'fa-lg', 'fa-sm', 'fa-xs',
     'fa-rotate-270', 'fa-flip-horizontal', 'fa-flip-vertical', 'fa-stack',
     'fa-inverse')
 
+# Проверяем и веб-интерфейс, и страницы установщика: у них общий шрифт,
+# но разные файлы, и опечатка в одном не видна из другого.
+$dirs = @($PublicDir, "setup-ui") | Where-Object { Test-Path $_ }
 $used = @{}
-foreach ($file in (Get-ChildItem $PublicDir -Recurse -Include *.js, *.html)) {
+$allFiles = @()
+foreach ($dir in $dirs) {
+    $allFiles += Get-ChildItem $dir -Recurse -Include *.js, *.html
+}
+foreach ($file in $allFiles) {
     $text = Get-Content $file.FullName -Raw -Encoding UTF8
     foreach ($m in [regex]::Matches($text, 'fa-[a-z0-9-]+')) {
         $used[$m.Value] = $file.Name

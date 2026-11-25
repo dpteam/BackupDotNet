@@ -110,6 +110,97 @@ internal static class Program
 				}
 			},
 
+			// Полная диагностика: почему не подключается — по пунктам.
+			{ "/api/remote/diagnose", delegate (string body)
+				{
+					Dictionary<string, object> d = ParseJson(body);
+					RemoteDiagnostics.Report report = RemoteDiagnostics.Inspect(
+						Json.GetStr(d, "host", "").Trim(),
+						Json.GetStr(d, "user", "").Trim(),
+						Json.GetStr(d, "password", ""),
+						Json.GetStr(d, "mode", "smb"),
+						Json.Int(Json.Get(d, "port"), 5985));
+					return Json.Write(report.ToJson());
+				}
+			},
+
+			// Скрипт исправления для целевой машины.
+			{ "/api/remote/fix", delegate (string body)
+				{
+					Dictionary<string, object> d = ParseJson(body);
+					string format = Json.GetStr(d, "format", "ps1");
+					bool forWinRm = Json.GetStr(d, "mode", "smb") == "winrm";
+
+					List<string> codes = new List<string>();
+					foreach (object o in Json.AsArray(Json.Get(d, "broken")))
+					{
+						string code = Json.Str(o, "").Trim();
+						if (code.Length > 0)
+						{
+							codes.Add(code);
+						}
+					}
+
+					string script = format == "cmd"
+						? FixScripts.BuildCmd(codes)
+						: FixScripts.Build(codes, forWinRm);
+
+					Dictionary<string, object> res = Json.Obj();
+					res["ok"] = true;
+					res["script"] = script;
+					res["format"] = format;
+					res["empty"] = script.Length == 0;
+					if (script.Length == 0)
+					{
+						// Скрипт не поможет, если проблема не в настройках машины:
+						// имя не разрешается, машина выключена, учётка чужая.
+						res["note"] = codes.Count == 0
+							? "чинить нечего: все проверки пройдены"
+							: "эти проблемы скриптом не исправить: проверьте имя компьютера, " +
+								"питание и учётную запись";
+					}
+					return Json.Write(res);
+				}
+			},
+
+			// Сохранение скрипта рядом с установщиком: чтобы можно было
+			// перенести на целевую машину флешкой или по почте.
+			{ "/api/save-script", delegate (string body)
+				{
+					Dictionary<string, object> d = ParseJson(body);
+					string name = Json.GetStr(d, "name", "prepare-host.ps1");
+					string text = Json.GetStr(d, "text", "");
+
+					// Только имя файла: путь из страницы не должен никуда выводить.
+					name = System.IO.Path.GetFileName(name);
+					if (name.Length == 0)
+					{
+						name = "prepare-host.ps1";
+					}
+
+					string dir = System.IO.Path.Combine(
+						AppDomain.CurrentDomain.BaseDirectory, "fix-scripts");
+					try
+					{
+						System.IO.Directory.CreateDirectory(dir);
+						string path = System.IO.Path.Combine(dir, name);
+						System.IO.File.WriteAllText(path, text, new System.Text.UTF8Encoding(true));
+						Log.Info("Скрипт сохранён: " + path);
+
+						Dictionary<string, object> res = Json.Obj();
+						res["ok"] = true;
+						res["path"] = path;
+						res["name"] = name;
+						return Json.Write(res);
+					}
+					catch (Exception ex)
+					{
+						Log.Warn("Сохранение скрипта: " + ex.Message);
+						return "{\"ok\":false,\"error\":" + Json.Str(ex.Message) + "}";
+					}
+				}
+			},
+
 			// Запуск установки: отвечает сразу, дальше страница опрашивает прогресс.
 			{ "/api/install/local", delegate (string body)
 				{

@@ -1,4 +1,4 @@
-/* ==========================================================================
+﻿/* ==========================================================================
    Логика мастера установки.
 
    Общается с движком по HTTP (локальный сервер внутри установщика), поэтому
@@ -135,13 +135,13 @@
 
     var notes = '';
     if (!env.isAdmin) {
-      notes += '<div class="note fail"><i class="fas fa-circle-exclamation"></i>' +
+      notes += '<div class="note fail"><i class="fas fa-exclamation-circle"></i>' +
         '<div><b>Нет прав администратора.</b> Установщик запущен без повышения — ' +
         'создать службу не получится. Закройте мастер и запустите ' +
         '<code>BackupDotNet.Setup.exe</code> от имени администратора.</div></div>';
     }
     if (env.existing && env.existing.found) {
-      notes += '<div class="note warn"><i class="fas fa-triangle-exclamation"></i>' +
+      notes += '<div class="note warn"><i class="fas fa-exclamation-triangle"></i>' +
         '<div><b>Агент уже установлен на этой машине.</b> ' +
         'Найденное: ' + esc((env.existing.folders || []).join(', ') || '—') +
         (env.existing.services && env.existing.services.length
@@ -149,7 +149,7 @@
         '. Установка перезапишет файлы, конфигурация останется прежней.</div></div>';
     }
     if (!env.isDomainJoined) {
-      notes += '<div class="note"><i class="fas fa-circle-info"></i>' +
+      notes += '<div class="note"><i class="fas fa-info-circle"></i>' +
         '<div>Машина в рабочей группе. Установка по сети потребует ' +
         '<code>TrustedHosts</code> на цели — мастер предложит это позже.</div></div>';
     }
@@ -169,13 +169,13 @@
 
     if (session && session.payloadReady) {
       box.innerHTML =
-        '<div class="note ok" style="margin-bottom:0"><i class="fas fa-circle-check"></i>' +
+        '<div class="note ok" style="margin-bottom:0"><i class="fas fa-check-circle"></i>' +
         '<div><b>Пакет на месте.</b> Версия агента: ' +
         esc(session.payloadVersion || 'неизвестна') + '.<br>' +
         'Источник: <code>' + esc(session.payloadDir) + '</code></div></div>';
     } else {
       box.innerHTML =
-        '<div class="note fail" style="margin-bottom:0"><i class="fas fa-circle-exclamation"></i>' +
+        '<div class="note fail" style="margin-bottom:0"><i class="fas fa-exclamation-circle"></i>' +
         '<div><b>Файлы агента не найдены.</b> Рядом с установщиком нужен каталог ' +
         '<code>payload</code> с <code>BackupDotNet.exe</code>. ' +
         'Распакуйте архив целиком.</div></div>';
@@ -242,23 +242,34 @@
     out.textContent = '';
     out.style.color = '';
 
-    api('/api/remote/test', { method: 'POST', body: {
+    var payload = {
       mode: state.mode,
       host: host,
       user: $('rm-user').value.trim(),
       password: $('rm-pass').value,
       port: parseInt($('rm-port').value, 10) || 5985,
       https: $('rm-https').checked
-    } }).then(function (r) {
-      out.style.color = r.ok ? 'var(--ok)' : 'var(--fail)';
-      out.textContent = r.ok
-        ? 'связь есть: ' + (r.steps || []).join(', ')
-        : (r.message || 'не удалось');
-      if (r.warnings && r.warnings.length) {
-        out.textContent += ' — ' + r.warnings.join('; ');
-      }
-      state.remoteOk = !!r.ok;
+    };
+
+    api('/api/remote/diagnose', { method: 'POST', body: payload }).then(function (d) {
+      state.diag = d;
+      state.remoteOk = !!d.ok;
+      renderDiagnostics(d);
+
+      var broken = (d.broken || []).length;
+      out.style.color = d.ok ? 'var(--ok)' : 'var(--fail)';
+      out.textContent = d.ok
+        ? 'всё в порядке'
+        : 'препятствий: ' + broken;
+
+      $('rm-retest').classList.toggle('hidden', d.ok);
       updateNextState();
+
+      if (!d.ok) {
+        loadFixScript();
+      } else {
+        $('rm-fix-card').classList.add('hidden');
+      }
     }).catch(function (err) {
       out.style.color = 'var(--fail)';
       out.textContent = 'Ошибка: ' + err.message;
@@ -266,8 +277,132 @@
       updateNextState();
     }).then(function () {
       btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-plug"></i> Проверить связь';
+      btn.innerHTML = '<i class="fas fa-stethoscope"></i> Проверить связь';
     });
+  }
+
+  /** Показывает список проверок с состояниями. */
+  function renderDiagnostics(d) {
+    var card = $('rm-diag-card');
+    var list = $('rm-diag-list');
+    var checks = d.checks || [];
+
+    if (!checks.length) {
+      card.classList.add('hidden');
+      return;
+    }
+
+    var icons = {
+      ok: '<i class="fas fa-check-circle" style="color:var(--ok)"></i>',
+      warn: '<i class="fas fa-exclamation-triangle" style="color:var(--warn)"></i>',
+      fail: '<i class="fas fa-exclamation-circle" style="color:var(--fail)"></i>',
+      skip: '<i class="fas fa-minus" style="color:var(--muted)"></i>'
+    };
+
+    list.innerHTML = checks.map(function (c) {
+      var icon = icons[c.state] || icons.skip;
+      var fix = c.fixHint
+        ? '<div class="check-detail" style="color:var(--warn)">→ ' + esc(c.fixHint) + '</div>'
+        : '';
+      return '<li class="check-item ' + esc(c.state) + '">' + icon +
+        '<div class="check-text">' + esc(c.title) +
+        '<div class="check-detail">' + esc(c.detail) + '</div>' + fix + '</div></li>';
+    }).join('');
+
+    var okCount = checks.filter(function (c) { return c.state === 'ok'; }).length;
+    $('rm-diag-summary').textContent = 'пройдено ' + okCount + ' из ' + checks.length;
+    card.classList.remove('hidden');
+  }
+
+  /** Загружает скрипт исправления для найденных проблем. */
+  function loadFixScript() {
+    if (!state.diag) return;
+
+    var format = $('rm-fix-format').value;
+    api('/api/remote/fix', { method: 'POST', body: {
+      broken: state.diag.broken || [],
+      mode: state.mode,
+      format: format
+    } }).then(function (r) {
+      var card = $('rm-fix-card');
+      if (r.empty) {
+        // Скрипт не всегда возможен: имя не разрешается, машина выключена.
+        card.classList.add('hidden');
+        if (r.note) {
+          var out = $('rm-test-result');
+          out.textContent = r.note;
+          out.style.color = 'var(--warn)';
+        }
+        return;
+      }
+      $('rm-fix-text').textContent = r.script;
+      card.classList.remove('hidden');
+    }).catch(function (err) {
+      $('rm-fix-text').textContent = 'Не удалось собрать скрипт: ' + err.message;
+      $('rm-fix-card').classList.remove('hidden');
+    });
+  }
+
+  /** Копирует скрипт в буфер обмена. */
+  function copyFixScript() {
+    var text = $('rm-fix-text').textContent || '';
+    if (!text) return;
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        var btn = $('rm-fix-copy');
+        var old = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-check"></i> Скопировано';
+        setTimeout(function () { btn.innerHTML = old; }, 1600);
+      }).catch(function () {
+        fallbackCopy(text);
+      });
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  /** Запасной способ копирования: старый API, работает и в WebView2. */
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      var btn = $('rm-fix-copy');
+      var old = btn.innerHTML;
+      btn.innerHTML = '<i class="fas fa-check"></i> Скопировано';
+      setTimeout(function () { btn.innerHTML = old; }, 1600);
+    } catch (e) {
+      alert('Не удалось скопировать. Выделите текст и нажмите Ctrl+C.');
+    }
+    document.body.removeChild(ta);
+  }
+
+  /** Сохраняет скрипт в файл рядом с установщиком. */
+  function saveFixScript() {
+    var text = $('rm-fix-text').textContent || '';
+    if (!text) return;
+    var format = $('rm-fix-format').value;
+    var name = 'prepare-host.' + format;
+
+    api('/api/save-script', { method: 'POST', body: { name: name, text: text } })
+      .then(function (r) {
+        toastLine('Сохранено: ' + (r.path || name));
+      })
+      .catch(function (err) {
+        toastLine('Не удалось сохранить: ' + err.message);
+      });
+  }
+
+  function toastLine(text) {
+    var out = $('rm-test-result');
+    if (!out) return;
+    out.textContent = text;
+    out.style.color = 'var(--ink-soft)';
   }
 
   /** Кнопка «Далее» активна, если для сетевого режима связь проверена. */
@@ -325,7 +460,7 @@
           renderRemotePreflight(r, req);
         })
         .catch(function (err) {
-          list.innerHTML = '<li class="check-item fail"><i class="fas fa-circle-exclamation"></i>' +
+          list.innerHTML = '<li class="check-item fail"><i class="fas fa-exclamation-circle"></i>' +
             '<div class="check-text">Ошибка проверки: ' + esc(err.message) + '</div></li>';
         });
       return;
@@ -336,7 +471,7 @@
         renderPreflight(p);
       })
       .catch(function (err) {
-        list.innerHTML = '<li class="check-item fail"><i class="fas fa-circle-exclamation"></i>' +
+        list.innerHTML = '<li class="check-item fail"><i class="fas fa-exclamation-circle"></i>' +
           '<div class="check-text">Ошибка проверки: ' + esc(err.message) + '</div></li>';
       });
   }
@@ -361,11 +496,11 @@
 
     // Результат проверки — сверху.
     if (r.ok) {
-      rows.unshift('<li class="check-item ok"><i class="fas fa-circle-check"></i>' +
+      rows.unshift('<li class="check-item ok"><i class="fas fa-check-circle"></i>' +
         '<div class="check-text">Связь есть<div class="check-detail">' +
         esc((r.steps || []).join(', ')) + '</div></div></li>');
     } else {
-      rows.unshift('<li class="check-item fail"><i class="fas fa-circle-exclamation"></i>' +
+      rows.unshift('<li class="check-item fail"><i class="fas fa-exclamation-circle"></i>' +
         '<div class="check-text">' + esc(r.message || 'нет связи') + '</div></li>');
     }
 
@@ -406,15 +541,15 @@
 
     var notes = '';
     (p.problems || []).forEach(function (t) {
-      notes += '<div class="note fail"><i class="fas fa-circle-exclamation"></i>' +
+      notes += '<div class="note fail"><i class="fas fa-exclamation-circle"></i>' +
         '<div>' + esc(t) + '</div></div>';
     });
     (p.warnings || []).forEach(function (t) {
-      notes += '<div class="note warn"><i class="fas fa-triangle-exclamation"></i>' +
+      notes += '<div class="note warn"><i class="fas fa-exclamation-triangle"></i>' +
         '<div>' + esc(t) + '</div></div>';
     });
     if (p.ok && !(p.warnings || []).length) {
-      notes = '<div class="note ok"><i class="fas fa-circle-check"></i>' +
+      notes = '<div class="note ok"><i class="fas fa-check-circle"></i>' +
         '<div>Всё готово. Можно устанавливать.</div></div>';
     }
     $('preflight-notes').innerHTML = notes;
@@ -541,7 +676,7 @@
     var link = document.createElement('div');
     link.className = 'note ok';
     link.style.marginTop = '14px';
-    link.innerHTML = '<i class="fas fa-circle-check"></i><div>' +
+    link.innerHTML = '<i class="fas fa-check-circle"></i><div>' +
       'Открыть веб-интерфейс: <a href="http://' + esc(hostForUrl) + ':' + webPort +
       '/" target="_blank">http://' + esc(hostForUrl) + ':' + webPort + '/</a></div>';
     $('done-box').appendChild(link);
@@ -572,6 +707,10 @@
     }
 
     $('rm-test').addEventListener('click', testRemote);
+    $('rm-retest').addEventListener('click', testRemote);
+    $('rm-fix-copy').addEventListener('click', copyFixScript);
+    $('rm-fix-save').addEventListener('click', saveFixScript);
+    $('rm-fix-format').addEventListener('change', loadFixScript);
 
     // Правка полей удалённой установки сбрасывает проверку: связь могла
     // измениться, и «Далее» должна снова требовать теста.
@@ -580,7 +719,11 @@
       if (el) {
         el.addEventListener('input', function () {
           state.remoteOk = false;
+          state.diag = null;
           $('rm-test-result').textContent = '';
+          $('rm-retest').classList.add('hidden');
+          $('rm-diag-card').classList.add('hidden');
+          $('rm-fix-card').classList.add('hidden');
           updateNextState();
         });
       }
