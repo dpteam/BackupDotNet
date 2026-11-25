@@ -8518,6 +8518,90 @@
     busy: ''
   };
 
+  /**
+   * Создание агента вручную: имя → токен + адрес сервера.
+   *
+   * Зачем: при установке агента установщиком на другой машине нужны адрес
+   * сервера и токен. Раньше токен выдавался только при развёртывании
+   * по WinRM, и человек, ставивший агент руками, не понимал, что вписать.
+   */
+  function showAgentTokenDialog() {
+    var old = document.getElementById('agent-token-overlay');
+    if (old) old.parentNode.removeChild(old);
+
+    var overlay = document.createElement('div');
+    overlay.id = 'agent-token-overlay';
+    overlay.className = 'wizard-overlay';
+    overlay.innerHTML = '<div class="wiz-card" style="width:560px">' +
+      '<div class="wiz-head"><i class="fas fa-robot"></i> Новый агент' +
+        '<span class="spacer"></span>' +
+        '<button type="button" class="btn btn-sm" id="agt-close"><i class="fas fa-times"></i></button>' +
+      '</div>' +
+      '<div class="wiz-body">' +
+        '<label class="fld"><span>Имя агента *</span>' +
+          '<input type="text" id="agt-name" placeholder="например: Филиал Омск" autocomplete="off">' +
+          '<small>как называть эту машину в списке — имя сервера подставится само</small>' +
+        '</label>' +
+        '<div class="wiz-test" id="agt-result"></div>' +
+      '</div>' +
+      '<div class="wiz-foot"><span class="spacer"></span>' +
+        '<button type="button" class="btn btn-primary" id="agt-create">' +
+          '<i class="fas fa-plus"></i> Создать и показать токен</button>' +
+      '</div></div>';
+
+    document.body.appendChild(overlay);
+    document.getElementById('agt-close').addEventListener('click', function () {
+      overlay.parentNode.removeChild(overlay);
+    });
+
+    var nameInput = document.getElementById('agt-name');
+    nameInput.focus();
+
+    document.getElementById('agt-create').addEventListener('click', function () {
+      var btn = this;
+      var name = nameInput.value.trim();
+      if (!name) { toast('Укажите имя агента', 'error'); return; }
+
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Создаю…';
+
+      api('/api/agents', { method: 'POST', body: { name: name } }).then(function (r) {
+        var box = document.getElementById('agt-result');
+        box.className = 'wiz-test good';
+        box.innerHTML =
+          '<div style="font-weight:600;margin-bottom:8px">' +
+            '<i class="fas fa-check-circle"></i> Агент «' + esc(r.name) + '» создан</div>' +
+          '<div class="fld" style="margin-bottom:8px"><span>Адрес сервера</span>' +
+            '<div style="display:flex;gap:6px"><input type="text" readonly value="' + esc(r.centralUrl) + '" id="agt-url">' +
+            '<button type="button" class="btn btn-sm" data-copy="agt-url"><i class="fas fa-copy"></i></button></div></div>' +
+          '<div class="fld" style="margin-bottom:8px"><span>Токен</span>' +
+            '<div style="display:flex;gap:6px"><input type="text" readonly value="' + esc(r.token) + '" id="agt-token">' +
+            '<button type="button" class="btn btn-sm" data-copy="agt-token"><i class="fas fa-copy"></i></button></div></div>' +
+          '<div style="color:var(--ink-soft);font-size:11.5px">' +
+            'В установщике агента введите эти два значения. Токен можно посмотреть ' +
+            'здесь позже — или выпустить новый, если он потерялся.' +
+          '</div>';
+
+        box.querySelectorAll('[data-copy]').forEach(function (b) {
+          b.addEventListener('click', function () {
+            var el = document.getElementById(b.getAttribute('data-copy'));
+            el.select();
+            try { document.execCommand('copy'); toast('Скопировано', 'ok'); }
+            catch (e) { toast('Скопируйте вручную', 'error'); }
+          });
+        });
+
+        btn.innerHTML = '<i class="fas fa-check"></i> Готово';
+      }).catch(function (err) {
+        var box = document.getElementById('agt-result');
+        box.className = 'wiz-test bad';
+        box.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + esc(err.message);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-plus"></i> Создать и показать токен';
+      });
+    });
+  }
+
   function renderDeploy() {
     stopDeployPolling();
     view.innerHTML = '<div class="muted">Загрузка…</div>';
@@ -8628,17 +8712,29 @@
       html += '<div class="card"><div class="card-head">' +
         '<i class="fas fa-robot"></i> Агенты' +
         '<span class="spacer"></span>' +
-        '<span class="muted" style="font-size:11px;margin-right:10px">версия ' +
+        '<span class="muted" style="font-size:11px;margin-right:10px">сервер ' +
           esc(st.currentVersion || '?') + '</span>' +
+        '<button class="btn btn-sm" id="dp-agent-new">' +
+          '<i class="fas fa-plus"></i> Агент вручную</button>' +
         (outdated.length
-          ? '<button class="btn btn-sm btn-primary" id="dp-update-all">' +
+          ? '<button class="btn btn-sm btn-primary" id="dp-update-all" style="margin-left:8px">' +
             '<i class="fas fa-sync-alt"></i> Обновить устаревшие (' + outdated.length + ')</button>'
           : '') +
         '</div>';
 
+      // Подсказка: где взять токен для установщика агента. Без неё человек
+      // видит в установщике поле «Токен» и не понимает, что туда вписать.
+      html += '<div class="card-body" style="padding-bottom:0">' +
+        '<div class="note" style="margin:0 0 10px"><i class="fas fa-key"></i><div>' +
+        'Ставите агент <b>вручную</b> установщиком на другой машине? Нажмите ' +
+        '«Агент вручную» — сервер создаст агента и покажет <b>токен</b>. ' +
+        'Этот токен вводится в установщике вместе с адресом этого сервера.' +
+        '</div></div></div>';
+
       if (!agents.length) {
         html += '<div class="card-body"><p class="muted" style="margin:0;font-size:11.5px">' +
-          'Агентов пока нет. Установите первого на вкладке «Подсеть» или «Active Directory».</p></div>';
+          'Агентов пока нет. Разверните агент на машины ниже или создайте вручную — ' +
+          'тогда его можно поставить установщиком.</p></div>';
       } else {
         html += '<div class="card-body" style="padding:0">' +
           '<div class="table-wrap"><table class="journal-table"><thead><tr>' +
@@ -8744,6 +8840,11 @@
         api('/api/deploy/credential', { method: 'POST', body: { username: user, password: pass } })
           .then(function () { toast('Доступ сохранён', 'ok'); renderDeploy(); })
           .catch(function (e) { toast('Ошибка: ' + e.message, 'error'); });
+      });
+
+      var agentNew = document.getElementById('dp-agent-new');
+      if (agentNew) agentNew.addEventListener('click', function () {
+        showAgentTokenDialog();
       });
 
       var scanBtn = $('#dp-scan');

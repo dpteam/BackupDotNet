@@ -303,13 +303,47 @@ public class AgentRegistry
 		}
 	}
 
+	/// <summary>
+	/// Новый токен для существующего агента. Пустая строка — агент не найден.
+	///
+	/// Нужно при переустановке: старый токен мог потеряться вместе с машиной
+	/// или утечь. Менять токен безопасно — старый сразу перестаёт работать.
+	/// </summary>
+	public string RotateToken(string id)
+	{
+		if (string.IsNullOrEmpty(id))
+		{
+			return "";
+		}
+		lock (_sync)
+		{
+			foreach (RemoteAgent a in _agents)
+			{
+				if (!string.Equals(a.Id, id, StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+				a.Token = NewToken();
+				try
+				{
+					SaveLocked();
+				}
+				catch (Exception ex)
+				{
+					Log.Warn("agents.json: " + ex.Message);
+				}
+				return a.Token;
+			}
+		}
+		return "";
+	}
+
 	public bool Remove(string id)
 	{
 		if (string.IsNullOrEmpty(id))
 		{
 			return false;
-		}
-		lock (_sync)
+		}		lock (_sync)
 		{
 			RemoteAgent found = null;
 			foreach (RemoteAgent a in _agents)

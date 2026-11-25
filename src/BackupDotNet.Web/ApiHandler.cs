@@ -377,6 +377,16 @@ public class ApiHandler
 				HandleAgentsList(ctx, session);
 				return;
 			}
+			if (path == "/api/agents" && method == "POST")
+			{
+				HandleAgentCreate(ctx, session);
+				return;
+			}
+			if (path == "/api/agents/token" && method == "POST")
+			{
+				HandleAgentToken(ctx, session);
+				return;
+			}
 			if (path == "/api/deploy/status" && method == "GET")
 			{
 				HandleDeployStatus(ctx, session);
@@ -3453,6 +3463,124 @@ public class ApiHandler
 		resp["accepted"] = accepted;
 		resp["errors"] = ToObjectList(errors);
 		WriteJson(ctx, resp, 200);
+	}
+
+	/// <summary>
+	/// POST /api/agents — создать агента вручную и получить токен.
+	///
+	/// Зачем: токен раньше выдавался только при развёртывании по WinRM
+	/// с сервера. Человек, который ставит агент установщиком на машину
+	/// руками, не мог узнать, что вписать в поле «Токен» — его просто
+	/// негде было взять.
+	/// </summary>
+	private void HandleAgentCreate(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+
+		Dictionary<string, object> body = ReadJson(ctx);
+		string name = Json.GetStr(body, "name", "").Trim();
+		string id = Json.GetStr(body, "id", "").Trim();
+
+		if (name.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "укажите имя агента"), 400);
+			return;
+		}
+		if (id.Length == 0)
+		{
+			id = Slugify(name);
+		}
+		if (id.Length < 2)
+		{
+			WriteJson(ctx, Json.Obj("error", "ID агента: нужно минимум 2 символа"), 400);
+			return;
+		}
+
+		AgentRegistry.RemoteAgent agent = _agents.Create(id, name, AgentRegistry.NewToken());
+		if (agent == null)
+		{
+			WriteJson(ctx, Json.Obj("error", "не удалось создать агента"), 500);
+			return;
+		}
+
+		_audit.Write(si.User, "agent.create", "агент " + agent.Id, ClientIp(ctx));
+
+		// Токен показываем один раз при создании: он нужен, чтобы вписать
+		// в установщик. Дальше он доступен на странице развёртывания.
+		Dictionary<string, object> res = Json.Obj();
+		res["ok"] = true;
+		res["id"] = agent.Id;
+		res["name"] = agent.Name;
+		res["token"] = agent.Token;
+		res["centralUrl"] = LocalBaseUrl(ctx);
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// POST /api/agents/token {"id":"..."} — новый токен для существующего
+	/// агента. Нужно при переустановке: старый токен мог утечь или потеряться.
+	/// </summary>
+	private void HandleAgentToken(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+
+		Dictionary<string, object> body = ReadJson(ctx);
+		string id = Json.GetStr(body, "id", "").Trim();
+		if (id.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "не указан агент"), 400);
+			return;
+		}
+
+		string token = _agents.RotateToken(id);
+		if (token.Length == 0)
+		{
+			WriteJson(ctx, Json.Obj("error", "агент '" + id + "' не найден"), 404);
+			return;
+		}
+
+		_audit.Write(si.User, "agent.token", "новый токен для " + id, ClientIp(ctx));
+
+		Dictionary<string, object> res = Json.Obj();
+		res["ok"] = true;
+		res["id"] = id;
+		res["token"] = token;
+		res["centralUrl"] = LocalBaseUrl(ctx);
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// Адрес, по которому агент должен обращаться к этому серверу.
+	/// Берём из запроса: человек сидит на том же адресе, что и агент увидит
+	/// из своей сети (если заходит по IP, а не по localhost).
+	/// </summary>
+	private string LocalBaseUrl(HttpListenerContext ctx)
+	{
+		try
+		{
+			string host = ctx.Request.Headers["Host"];
+			if (!string.IsNullOrEmpty(host) &&
+				host.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) < 0 &&
+				!host.StartsWith("127.0.0.1", StringComparison.Ordinal))
+			{
+				return "http://" + host;
+			}
+			// Зашли по localhost — подсказываем имя машины: агенту нужен
+			// адрес, доступный по сети, а не петля.
+			return "http://" + Environment.MachineName + ":" + _settings.HttpPort;
+		}
+		catch
+		{
+			return "http://" + Environment.MachineName + ":" + _settings.HttpPort;
+		}
 	}
 
 	private void HandleAgentsList(HttpListenerContext ctx, SessionInfo si)
