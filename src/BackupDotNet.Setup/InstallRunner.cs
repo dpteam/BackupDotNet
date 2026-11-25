@@ -154,9 +154,9 @@ public sealed class InstallRunner
 						Password = Json.GetStr(d, "password", ""),
 						Port = Json.Int(Json.Get(d, "port"), 5985),
 						Https = Json.Bool(Json.Get(d, "https"), dflt: false),
-						InstallDir = Json.GetStr(d, "installDir", @"C:\DPT.Backup"),
-						DataDir = Json.GetStr(d, "dataDir", @"C:\ProgramData\DPT.Backup"),
-						ServiceName = Json.GetStr(d, "serviceName", "DPTBackupService"),
+						InstallDir = Json.GetStr(d, "installDir", SetupBrand.InstallDir),
+						DataDir = Json.GetStr(d, "dataDir", SetupBrand.DataDir),
+						ServiceName = Json.GetStr(d, "serviceName", SetupBrand.ServiceName),
 						WebPort = Json.Int(Json.Get(d, "webPort"), 8080)
 					};
 					outcome = WinRmInstaller.Install(opt, progress);
@@ -168,9 +168,9 @@ public sealed class InstallRunner
 						Host = Json.GetStr(d, "host", "").Trim(),
 						User = Json.GetStr(d, "user", "").Trim(),
 						Password = Json.GetStr(d, "password", ""),
-						InstallDir = Json.GetStr(d, "installDir", @"C:\DPT.Backup"),
-						DataDir = Json.GetStr(d, "dataDir", @"C:\ProgramData\DPT.Backup"),
-						ServiceName = Json.GetStr(d, "serviceName", "DPTBackupService"),
+						InstallDir = Json.GetStr(d, "installDir", SetupBrand.InstallDir),
+						DataDir = Json.GetStr(d, "dataDir", SetupBrand.DataDir),
+						ServiceName = Json.GetStr(d, "serviceName", SetupBrand.ServiceName),
 						Port = Json.Int(Json.Get(d, "webPort"), 8080)
 					};
 					outcome = SmbInstaller.Install(opt, progress);
@@ -266,9 +266,9 @@ public sealed class InstallRunner
 					Json.GetStr(d, "user", "").Trim(),
 					Json.GetStr(d, "password", ""),
 					Json.Int(Json.Get(d, "winrmPort"), 5985),
-					Json.GetStr(d, "installDir", @"C:\DPT.Backup"),
-					Json.GetStr(d, "dataDir", @"C:\ProgramData\DPT.Backup"),
-					Json.GetStr(d, "serviceName", "DPTBackupService"),
+					Json.GetStr(d, "installDir", SetupBrand.InstallDir),
+					Json.GetStr(d, "dataDir", SetupBrand.DataDir),
+					Json.GetStr(d, "serviceName", SetupBrand.ServiceName),
 					Json.Int(Json.Get(d, "webPort"), 8080),
 					progress);
 

@@ -253,20 +253,20 @@ public static class AdInstaller
 	/// </summary>
 	/// <param name="sharePath">
 	/// Путь к папке, откуда машины будут брать файлы, например
-	/// <c>\\fileserver\Deploy\DPT.Backup</c>.
+	/// <c>\\fileserver\Deploy\<Продукт></c>.
 	/// </param>
 	public static string BuildGpoScript(string sharePath, string serviceName, int port)
 	{
 		string share = (sharePath ?? "").Trim().TrimEnd('\\');
 		if (share.Length == 0)
 		{
-			share = @"\\fileserver\Deploy\DPT.Backup";
+			share = @"\\fileserver\Deploy\" + SetupBrand.ProductName;
 		}
 
 		StringBuilder sb = new StringBuilder();
 		sb.AppendLine("@echo off");
 		sb.AppendLine("rem ============================================================");
-		sb.AppendLine("rem  DPT.Backup — установка через групповую политику");
+		sb.AppendLine("rem  " + SetupBrand.ProductName + " — установка через групповую политику");
 		sb.AppendLine("rem ============================================================");
 		sb.AppendLine("rem");
 		sb.AppendLine("rem  Как применить:");
@@ -282,14 +282,14 @@ public static class AdInstaller
 		sb.AppendLine();
 		sb.AppendLine("chcp 65001 >nul");
 		sb.AppendLine("set SHARE=" + share);
-		sb.AppendLine("set DEST=%ProgramFiles%\\DPT.Backup");
-		sb.AppendLine("set DATA=%ProgramData%\\DPT.Backup");
+		sb.AppendLine("set DEST=" + SetupBrand.InstallDir);
+		sb.AppendLine("set DATA=" + SetupBrand.DataDir);
 		sb.AppendLine("set SVC=" + serviceName);
 		sb.AppendLine();
 		sb.AppendLine("rem Уже установлен — выходим.");
 		sb.AppendLine("sc query \"%SVC%\" >nul 2>&1");
 		sb.AppendLine("if not errorlevel 1 (");
-		sb.AppendLine("  echo DPT.Backup уже установлен, пропускаю.");
+		sb.AppendLine("  echo " + SetupBrand.ProductName + " уже установлен, пропускаю.");
 		sb.AppendLine("  exit /b 0");
 		sb.AppendLine(")");
 		sb.AppendLine();
@@ -312,11 +312,11 @@ public static class AdInstaller
 		sb.AppendLine();
 		sb.AppendLine("echo Регистрирую службу");
 		sb.AppendLine("sc create \"%SVC%\" binPath= \"\\\"%DEST%\\BackupDotNet.exe\\\" --service\" start= auto >nul");
-		sb.AppendLine("sc description \"%SVC%\" \"Мониторинг бэкапов, доступности и железа\" >nul");
+		sb.AppendLine("sc description \"%SVC%\" \"" + SetupBrand.Current.Description + "\" >nul");
 		sb.AppendLine("sc failure \"%SVC%\" reset= 86400 actions= restart/60000/restart/60000/restart/60000 >nul");
 		sb.AppendLine();
 		sb.AppendLine("echo Открываю порт " + port);
-		sb.AppendLine("netsh advfirewall firewall add rule name=\"DPT.Backup\" dir=in action=allow protocol=TCP localport=" + port + " >nul");
+		sb.AppendLine("netsh advfirewall firewall add rule name=\"" + SetupBrand.FirewallRule + "\" dir=in action=allow protocol=TCP localport=" + port + " >nul");
 		sb.AppendLine("netsh http add urlacl url=http://+:" + port + "/ user=\"NT AUTHORITY\\SYSTEM\" >nul 2>&1");
 		sb.AppendLine();
 		sb.AppendLine("echo Запускаю службу");

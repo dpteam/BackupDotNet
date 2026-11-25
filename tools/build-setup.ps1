@@ -10,7 +10,11 @@
 
 param(
     [switch]$Zip,
-    [string]$OutDir = "artifacts\setup"
+    [string]$OutDir = "artifacts\setup",
+    # Брендинг для раздачи. По умолчанию — дебрендированный (BackupDotNet):
+    # релиз не должен уезжать с именем чьей-то инсталляции. Для своего
+    # продукта передать свой файл: -Branding config\branding.dpt.json
+    [string]$Branding = "config\branding.example.json"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,6 +63,19 @@ Copy-Item (Join-Path $setupBin 'BackupDotNet.Setup.exe') $out
 Copy-Item (Join-Path $setupBin 'BackupDotNet.Setup.exe.config') $out -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $setupBin 'setup-ui') $out -Recurse
 
+# Брендинг рядом с установщиком: из него мастер берёт название продукта,
+# пути и имя службы. Кладём копию выбранного файла, а не то, что лежит
+# в bin — там рабочая конфигурация конкретной инсталляции.
+$brandSrc = Join-Path $root $Branding
+if (-not (Test-Path $brandSrc)) {
+    throw "нет файла брендинга: $brandSrc"
+}
+$brandDir = Join-Path $out 'config'
+New-Item -ItemType Directory -Path $brandDir -Force | Out-Null
+Copy-Item $brandSrc (Join-Path $brandDir 'branding.json')
+$brandName = (Get-Content $brandSrc -Raw -Encoding UTF8 | ConvertFrom-Json).brand.productName
+Write-Host "  брендинг:   $brandName ($Branding)"
+
 # Зависимости установщика (Core — ради Log и Json). Без них exe не запустится:
 # проверено на практике, падает с FileNotFoundException ещё до окна.
 Get-ChildItem $setupBin -Filter '*.dll' | ForEach-Object {
@@ -97,10 +114,14 @@ $cfgSrc = Join-Path $agentBin 'config'
 if (Test-Path $cfgSrc) {
     $cfgDst = Join-Path $payload 'config'
     New-Item -ItemType Directory -Path $cfgDst -Force | Out-Null
-    # Только шаблоны: *.example.json и branding.json (он не секрет).
+    # Только шаблоны: *.example.json. branding.json не берём из bin —
+    # там рабочая конфигурация этой машины; в payload кладём тот же
+    # брендинг, что и рядом с установщиком.
     Get-ChildItem $cfgSrc -File | Where-Object {
-        $_.Name -like '*.example.json' -or $_.Name -eq 'branding.json'
+        $_.Name -like '*.example.json'
     } | ForEach-Object { Copy-Item $_.FullName $cfgDst }
+
+    Copy-Item $brandSrc (Join-Path $cfgDst 'branding.json')
 }
 
 $payloadFiles = (Get-ChildItem $payload -Recurse -File | Measure-Object).Count

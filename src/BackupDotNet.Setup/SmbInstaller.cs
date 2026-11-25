@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -32,11 +32,11 @@ public static class SmbInstaller
 
 		public string Password = "";
 
-		public string InstallDir = @"C:\DPT.Backup";
+		public string InstallDir = SetupBrand.InstallDir;
 
-		public string DataDir = @"C:\ProgramData\DPT.Backup";
+		public string DataDir = SetupBrand.DataDir;
 
-		public string ServiceName = "DPTBackupService";
+		public string ServiceName = SetupBrand.ServiceName;
 
 		public int Port = 8080;
 
@@ -297,15 +297,15 @@ public static class SmbInstaller
 		sb.AppendLine("sc create \"" + options.ServiceName + "\" binPath= \"\\\"" + options.InstallDir +
 			"\\BackupDotNet.exe\\\" --service\" start= auto >nul");
 		sb.AppendLine("if errorlevel 1 goto :fail");
-		sb.AppendLine("sc description \"" + options.ServiceName + "\" \"Мониторинг бэкапов, доступности и железа\" >nul");
+		sb.AppendLine("sc description \"" + options.ServiceName + "\" \"" + SetupBrand.Current.Description + "\" >nul");
 		sb.AppendLine("sc failure \"" + options.ServiceName +
 			"\" reset= 86400 actions= restart/60000/restart/60000/restart/60000 >nul");
 		sb.AppendLine("");
 
 		// Firewall и urlacl.
 		sb.AppendLine("echo [72] Открываю порт");
-		sb.AppendLine("netsh advfirewall firewall delete rule name=\"DPT.Backup\" >nul 2>&1");
-		sb.AppendLine("netsh advfirewall firewall add rule name=\"DPT.Backup\" dir=in action=allow protocol=TCP localport=" +
+		sb.AppendLine("netsh advfirewall firewall delete rule name=\"" + SetupBrand.FirewallRule + "\" >nul 2>&1");
+		sb.AppendLine("netsh advfirewall firewall add rule name=\"" + SetupBrand.FirewallRule + "\" dir=in action=allow protocol=TCP localport=" +
 			options.Port + " >nul");
 		sb.AppendLine("netsh http add urlacl url=http://+:" + options.Port +
 			"/ user=\"NT AUTHORITY\\SYSTEM\" >nul 2>&1");

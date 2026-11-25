@@ -151,11 +151,39 @@
     $('env-notes').innerHTML = notes;
 
     // Значения по умолчанию для формы.
+    // Берутся из брендинга (config/branding.json рядом с установщиком),
+    // а не из HTML: в раздаваемом установщике не должно быть имени
+    // конкретной инсталляции.
     var d = env.defaults || {};
     if ($('install-dir') && !$('install-dir').value) $('install-dir').value = d.installDir || '';
     if ($('data-dir') && !$('data-dir').value) $('data-dir').value = d.dataDir || '';
     if ($('service-name') && !$('service-name').value) $('service-name').value = d.serviceName || '';
     if ($('port') && !$('port').value) $('port').value = d.port || 8080;
+
+    // Удалённая установка и домен — те же умолчания.
+    ['rm-install-dir', 'ad-install-dir'].forEach(function (id) {
+      if ($(id) && !$(id).value) $(id).value = d.installDir || '';
+    });
+    ['rm-data-dir', 'ad-data-dir'].forEach(function (id) {
+      if ($(id) && !$(id).value) $(id).value = d.dataDir || '';
+    });
+    ['rm-service', 'ad-service'].forEach(function (id) {
+      if ($(id) && !$(id).value) $(id).value = d.serviceName || '';
+    });
+    if ($('ad-share') && !$('ad-share').value) $('ad-share').value = d.gpoShare || '';
+    ['rm-webport', 'ad-webport'].forEach(function (id) {
+      if ($(id) && !$(id).value) $(id).value = d.port || 8080;
+    });
+
+    // Название продукта в шапке и заголовке окна.
+    var product = env.productName || d.productName || '';
+    if (product) {
+      $('top-title').textContent = 'Установка ' + product;
+      document.title = 'Установка ' + product;
+    }
+    if ($('top-sub')) {
+      $('top-sub').textContent = env.productDescription || '';
+    }
   }
 
   function renderPayload(session) {

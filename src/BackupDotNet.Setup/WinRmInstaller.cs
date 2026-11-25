@@ -31,11 +31,11 @@ public static class WinRmInstaller
 
 		public bool Https;
 
-		public string InstallDir = @"C:\DPT.Backup";
+		public string InstallDir = SetupBrand.InstallDir;
 
-		public string DataDir = @"C:\ProgramData\DPT.Backup";
+		public string DataDir = SetupBrand.DataDir;
 
-		public string ServiceName = "DPTBackupService";
+		public string ServiceName = SetupBrand.ServiceName;
 
 		public int WebPort = 8080;
 
@@ -317,7 +317,7 @@ public static class WinRmInstaller
 
 		// env.json.
 		sb.Append("$envJson = @{ installDir = ($dst + '\\'); dataDir = $data; serviceName = $svc; ");
-		sb.Append("serviceNameRemote = 'DPTBackupRemote' } | ConvertTo-Json; ");
+		sb.Append("serviceNameRemote = '" + SetupBrand.ServiceNameRemote + "' } | ConvertTo-Json; ");
 		sb.Append("Set-Content -Path (Join-Path $dst 'config\\env.json') -Value $envJson -Encoding UTF8; ");
 
 		// Служба.
@@ -330,8 +330,8 @@ public static class WinRmInstaller
 		sb.Append("& sc.exe failure $svc reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null; ");
 
 		// Firewall и urlacl.
-		sb.Append("& netsh advfirewall firewall delete rule name='DPT.Backup' | Out-Null; ");
-		sb.Append("& netsh advfirewall firewall add rule name='DPT.Backup' dir=in action=allow protocol=TCP localport=")
+		sb.Append("& netsh advfirewall firewall delete rule name='" + SetupBrand.FirewallRule + "' | Out-Null; ");
+		sb.Append("& netsh advfirewall firewall add rule name='" + SetupBrand.FirewallRule + "' dir=in action=allow protocol=TCP localport=")
 			.Append(options.WebPort).Append(" | Out-Null; ");
 		sb.Append("& netsh http add urlacl url=http://+:").Append(options.WebPort)
 			.Append("/ user='NT AUTHORITY\\SYSTEM' | Out-Null; ");

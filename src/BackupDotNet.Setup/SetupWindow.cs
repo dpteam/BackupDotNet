@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -32,7 +32,7 @@ public sealed class SetupWindow : Form
 		_url = url;
 		_uiDir = uiDir;
 
-		Text = "Установка DPT.Backup";
+		Text = "Установка " + SetupBrand.ProductName;
 		StartPosition = FormStartPosition.CenterScreen;
 		MinimumSize = new Size(900, 620);
 		ClientSize = new Size(1000, 700);
@@ -162,7 +162,7 @@ public sealed class SetupWindow : Form
 		}
 		catch (Exception ex)
 		{
-			MessageBox.Show("Не удалось открыть браузер: " + ex.Message, "Установка DPT.Backup",
+			MessageBox.Show("Не удалось открыть браузер: " + ex.Message, SetupBrand.ProductName + " — установка",
 				MessageBoxButtons.OK, MessageBoxIcon.Warning);
 		}
 	}

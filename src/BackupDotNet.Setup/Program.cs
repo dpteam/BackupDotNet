@@ -73,7 +73,7 @@ internal static class Program
 			return 0;
 		}
 
-		Log.Info("=== Установщик DPT.Backup " + SetupVersion + " ===");
+		Log.Info("=== Установщик " + SetupBrand.ProductName + " " + SetupVersion + " ===");
 		Log.Info("Каталог: " + AppDomain.CurrentDomain.BaseDirectory);
 		Log.Info("Права администратора: " + (EnvProbe.IsAdmin() ? "да" : "нет"));
 
@@ -94,7 +94,7 @@ internal static class Program
 			MessageBox.Show(
 				"Не найден каталог setup-ui рядом с установщиком.\r\n" +
 				"Распакуйте архив полностью, не отделяя BackupDotNet.Setup.exe от папок.",
-				"Установка DPT.Backup", MessageBoxButtons.OK, MessageBoxIcon.Error);
+				SetupBrand.ProductName + " — установка", MessageBoxButtons.OK, MessageBoxIcon.Error);
 			return 2;
 		}
 
@@ -276,7 +276,7 @@ internal static class Program
 					Dictionary<string, object> d = ParseJson(body);
 					string script = AdInstaller.BuildGpoScript(
 						Json.GetStr(d, "sharePath", ""),
-						Json.GetStr(d, "serviceName", "DPTBackupService"),
+						Json.GetStr(d, "serviceName", SetupBrand.ServiceName),
 						Json.Int(Json.Get(d, "port"), 8080));
 
 					Dictionary<string, object> res = Json.Obj();
@@ -338,7 +338,7 @@ internal static class Program
 		if (!server.Start())
 		{
 			MessageBox.Show("Не удалось запустить локальный сервер мастера.",
-				"Установка DPT.Backup", MessageBoxButtons.OK, MessageBoxIcon.Error);
+				SetupBrand.ProductName + " — установка", MessageBoxButtons.OK, MessageBoxIcon.Error);
 			return 3;
 		}
 
@@ -375,11 +375,9 @@ internal static class Program
 		SetupEngine.Request request = new SetupEngine.Request
 		{
 			Mode = "local",
-			InstallDir = Path.Combine(
-				Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "DPT.Backup"),
-			DataDir = Path.Combine(
-				Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "DPT.Backup"),
-			ServiceName = "DPTBackupService",
+			InstallDir = SetupBrand.InstallDir,
+			DataDir = SetupBrand.DataDir,
+			ServiceName = SetupBrand.ServiceName,
 			Port = 8080
 		};
 
@@ -425,24 +423,22 @@ internal static class Program
 		r.Mode = Json.GetStr(d, "mode", "local");
 		r.InstallDir = Json.GetStr(d, "installDir", "").Trim();
 		r.DataDir = Json.GetStr(d, "dataDir", "").Trim();
-		r.ServiceName = Json.GetStr(d, "serviceName", "DPTBackupService").Trim();
+		r.ServiceName = Json.GetStr(d, "serviceName", SetupBrand.ServiceName).Trim();
 		r.Port = Json.Int(Json.Get(d, "port"), 8080);
 		r.OverwriteConfig = Json.Bool(Json.Get(d, "overwriteConfig"), dflt: false);
 
 		// Пустые каталоги — подставляем разумные умолчания, а не падаем.
 		if (r.InstallDir.Length == 0)
 		{
-			r.InstallDir = Path.Combine(
-				Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "DPT.Backup");
+			r.InstallDir = SetupBrand.InstallDir;
 		}
 		if (r.DataDir.Length == 0)
 		{
-			r.DataDir = Path.Combine(
-				Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "DPT.Backup");
+			r.DataDir = SetupBrand.DataDir;
 		}
 		if (r.ServiceName.Length == 0)
 		{
-			r.ServiceName = "DPTBackupService";
+			r.ServiceName = SetupBrand.ServiceName;
 		}
 		return r;
 	}

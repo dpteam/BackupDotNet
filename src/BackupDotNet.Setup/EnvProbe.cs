@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Principal;
@@ -27,6 +27,12 @@ public static class EnvProbe
 		d["osBuild"] = Environment.OSVersion.Version.Build;
 		d["isAdmin"] = IsAdmin();
 		d["isDomainJoined"] = IsDomainJoined();
+
+		// Брендинг: интерфейс мастера берёт отсюда название продукта,
+		// а не из зашитого в HTML текста.
+		d["productName"] = SetupBrand.ProductName;
+		d["productDescription"] = SetupBrand.Current.Description;
+		d["productCompany"] = SetupBrand.Current.Company;
 		d["dotnet"] = ClrVersion();
 		d["processorCount"] = Environment.ProcessorCount;
 
@@ -55,11 +61,12 @@ public static class EnvProbe
 
 		// Куда ставим по умолчанию.
 		Dictionary<string, object> defaults = Json.Obj();
-		defaults["installDir"] = Path.Combine(
-			Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "DPT.Backup");
-		defaults["dataDir"] = Path.Combine(
-			Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "DPT.Backup");
-		defaults["serviceName"] = "DPTBackupService";
+		defaults["installDir"] = SetupBrand.InstallDir;
+		defaults["dataDir"] = SetupBrand.DataDir;
+		defaults["serviceName"] = SetupBrand.ServiceName;
+		defaults["productName"] = SetupBrand.ProductName;
+		// Папка на шаре для пакета GPO: имя продукта, а не зашитая строка.
+		defaults["gpoShare"] = @"\\fileserver\Deploy\" + SetupBrand.ProductName;
 		defaults["port"] = 8080;
 		d["defaults"] = defaults;
 
@@ -122,7 +129,7 @@ public static class EnvProbe
 		Dictionary<string, object> d = Json.Obj();
 		bool found = false;
 
-		string[] serviceNames = { "DPTBackupService", "BackupDotNetService" };
+		string[] serviceNames = { SetupBrand.ServiceName, "BackupDotNetService" };
 		List<string> services = new List<string>();
 		foreach (string name in serviceNames)
 		{
@@ -136,7 +143,7 @@ public static class EnvProbe
 
 		string[] dirs =
 		{
-			Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "DPT.Backup"),
+			SetupBrand.InstallDir,
 			Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "BackupDotNet"),
 			@"C:\BackupDotNet"
 		};

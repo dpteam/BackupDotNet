@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Установка DPT.Backup</title>
+<title>Установка</title>
 <link rel="stylesheet" href="vendor/fa/css/all.min.css">
 <link rel="stylesheet" href="setup.css">
 </head>
@@ -12,8 +12,8 @@
 <header class="top">
   <img class="top-logo" src="setup-icon.png" alt="">
   <div>
-    <div class="top-title">Установка DPT.Backup</div>
-    <div class="top-sub">Мониторинг бэкапов, доступности и железа</div>
+    <div class="top-title" id="top-title">Установка</div>
+    <div class="top-sub" id="top-sub"></div>
   </div>
   <span class="spacer"></span>
   <span class="top-version" id="top-version"></span>
@@ -260,17 +260,17 @@
           <div class="grid2">
             <label class="fld">
               <span>Каталог программы</span>
-              <input type="text" id="rm-install-dir" value="C:\DPT.Backup" spellcheck="false">
+              <input type="text" id="rm-install-dir" value="" spellcheck="false">
             </label>
             <label class="fld">
               <span>Каталог данных</span>
-              <input type="text" id="rm-data-dir" value="C:\ProgramData\DPT.Backup" spellcheck="false">
+              <input type="text" id="rm-data-dir" value="" spellcheck="false">
             </label>
           </div>
           <div class="grid2">
             <label class="fld">
               <span>Имя службы</span>
-              <input type="text" id="rm-service" value="DPTBackupService" spellcheck="false">
+              <input type="text" id="rm-service" value="" spellcheck="false">
             </label>
             <label class="fld">
               <span>Порт веб-интерфейса</span>
@@ -343,17 +343,17 @@
           <div class="grid2">
             <label class="fld">
               <span>Каталог программы</span>
-              <input type="text" id="ad-install-dir" value="C:\DPT.Backup" spellcheck="false">
+              <input type="text" id="ad-install-dir" value="" spellcheck="false">
             </label>
             <label class="fld">
               <span>Каталог данных</span>
-              <input type="text" id="ad-data-dir" value="C:\ProgramData\DPT.Backup" spellcheck="false">
+              <input type="text" id="ad-data-dir" value="" spellcheck="false">
             </label>
           </div>
           <div class="grid2">
             <label class="fld">
               <span>Имя службы</span>
-              <input type="text" id="ad-service" value="DPTBackupService" spellcheck="false">
+              <input type="text" id="ad-service" value="" spellcheck="false">
             </label>
             <label class="fld">
               <span>Порт веб-интерфейса</span>
@@ -379,7 +379,7 @@
           </p>
           <label class="fld">
             <span>Папка на шаре, где будет лежать пакет</span>
-            <input type="text" id="ad-share" value="\\fileserver\Deploy\DPT.Backup" spellcheck="false">
+            <input type="text" id="ad-share" value="" spellcheck="false">
           </label>
           <button class="btn" id="ad-gpo"><i class="fas fa-download"></i> Собрать скрипт GPO</button>
           <pre class="fix-script hidden" id="ad-gpo-text" style="margin-top:12px"></pre>

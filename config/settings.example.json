@@ -67,7 +67,7 @@
     }
   },
   "vm": {
-    "protectedPatterns": ["LH_*", "DPT_*"],
+    "protectedPatterns": ["PROD-*"],
     "maxBatchSize": 5,
     "quarantineDays": 7,
     "requireForceForProtected": true

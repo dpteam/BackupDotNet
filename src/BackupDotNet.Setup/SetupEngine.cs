@@ -35,7 +35,7 @@ public sealed class SetupEngine
 
 		public string DataDir = "";
 
-		public string ServiceName = "DPTBackupService";
+		public string ServiceName = SetupBrand.ServiceName;
 
 		public int Port = 8080;
 
@@ -219,7 +219,7 @@ public sealed class SetupEngine
 
 		string installDir = request.InstallDir.TrimEnd('\\');
 		string dataDir = string.IsNullOrWhiteSpace(request.DataDir)
-			? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "DPT.Backup")
+			? SetupBrand.DataDir
 			: request.DataDir.TrimEnd('\\');
 
 		bool serviceCreated = false;
@@ -397,7 +397,7 @@ public sealed class SetupEngine
 		env["installDir"] = installDir + "\\";
 		env["dataDir"] = dataDir;
 		env["serviceName"] = serviceName;
-		env["serviceNameRemote"] = "DPTBackupRemote";
+		env["serviceNameRemote"] = SetupBrand.ServiceNameRemote;
 		string path = Path.Combine(installDir, "config", "env.json");
 		try
 		{
@@ -419,7 +419,7 @@ public sealed class SetupEngine
 		{
 			return output;
 		}
-		Run("sc.exe", "description \"" + name + "\" \"Мониторинг бэкапов, доступности и железа\"", out output);
+		Run("sc.exe", "description \"" + name + "\" \"" + SetupBrand.Current.Description + "\"", out output);
 		// Перезапуск при падении: три попытки с интервалом в минуту.
 		Run("sc.exe",
 			"failure \"" + name + "\" reset= 86400 actions= restart/60000/restart/60000/restart/60000",
@@ -431,7 +431,7 @@ public sealed class SetupEngine
 	{
 		string output;
 		int code = Run("netsh",
-			"advfirewall firewall add rule name=\"DPT.Backup\" dir=in action=allow protocol=TCP localport=" + port,
+			"advfirewall firewall add rule name=\"" + SetupBrand.FirewallRule + "\" dir=in action=allow protocol=TCP localport=" + port,
 			out output);
 		if (code != 0)
 		{

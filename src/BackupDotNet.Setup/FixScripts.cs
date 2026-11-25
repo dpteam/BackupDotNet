@@ -83,7 +83,7 @@ public static class FixScripts
 					"# Файловый общий доступ: без него не работают ни шары, ни установка\n" +
 					"Enable-NetFirewallRule -DisplayGroup 'Общий доступ к файлам и принтерам' -ErrorAction SilentlyContinue\n" +
 					"Enable-NetFirewallRule -DisplayGroup 'File and Printer Sharing' -ErrorAction SilentlyContinue\n" +
-					"New-NetFirewallRule -DisplayName 'DPT.Backup SMB' -Direction Inbound -Protocol TCP `\n" +
+					"New-NetFirewallRule -DisplayName '" + SetupBrand.ProductName + " SMB' -Direction Inbound -Protocol TCP `\n" +
 					"    -LocalPort 445 -Action Allow -ErrorAction SilentlyContinue | Out-Null\n" +
 					"Write-Host 'Порт 445 открыт'\n"
 			});
@@ -175,7 +175,7 @@ public static class FixScripts
 		}
 		StringBuilder sb = new StringBuilder();
 		sb.AppendLine("# ============================================================");
-		sb.AppendLine("#  DPT.Backup — подготовка машины к удалённой установке");
+		sb.AppendLine("#  " + SetupBrand.ProductName + " — подготовка машины к удалённой установке");
 		sb.AppendLine("# ============================================================");
 		sb.AppendLine("#");
 		sb.AppendLine("#  Запустить НА ЦЕЛЕВОЙ машине от имени администратора:");
@@ -244,7 +244,7 @@ public static class FixScripts
 
 		StringBuilder sb = new StringBuilder();
 		sb.AppendLine("@echo off");
-		sb.AppendLine("rem DPT.Backup — подготовка машины к удалённой установке");
+		sb.AppendLine("rem " + SetupBrand.ProductName + " — подготовка машины к удалённой установке");
 		sb.AppendLine("rem Запустить на целевой машине от имени администратора.");
 		sb.AppendLine("chcp 65001 >nul");
 		sb.AppendLine("net session >nul 2>&1");
@@ -268,7 +268,7 @@ public static class FixScripts
 		if (need.Contains("smb445"))
 		{
 			sb.AppendLine("rem Порт SMB 445 в firewall");
-			sb.AppendLine("netsh advfirewall firewall add rule name=\"DPT.Backup SMB\" dir=in action=allow protocol=TCP localport=445 >nul");
+			sb.AppendLine("netsh advfirewall firewall add rule name=\"" + SetupBrand.ProductName + " SMB\" dir=in action=allow protocol=TCP localport=445 >nul");
 			sb.AppendLine();
 		}
 
