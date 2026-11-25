@@ -138,17 +138,28 @@ jobs:
           path: release
           merge-multiple: true
 
+      # Описание релиза берём из репозитория: .github/release-notes/<тег>.md.
+      # Раньше текст был зашит здесь, и каждая публикация затирала написанное
+      # вручную описание — с историей изменений и инструкцией по установке.
+      - name: Поиск заметок к релизу
+        id: notes
+        shell: bash
+        run: |
+          tag="${{ github.ref_name }}"
+          f=".github/release-notes/${tag}.md"
+          if [ -f "$f" ]; then
+            echo "file=$f" >> "$GITHUB_OUTPUT"
+            echo "Заметки: $f"
+          else
+            echo "file=" >> "$GITHUB_OUTPUT"
+            echo "Заметок нет — GitHub сгенерирует список изменений сам."
+          fi
+
       - name: Публикация
         uses: softprops/action-gh-release@v2
         with:
           files: release/*.zip
+          body_path: ${{ steps.notes.outputs.file }}
           generate_release_notes: true
-          body: |
-            ## BackupDotNet ${{ github.ref_name }}
-
-            Сборка под .NET Framework 4.8. Сторонних зависимостей нет.
-
-            **Установка:** распаковать архив и запустить `install.ps1` от имени администратора.
-            Подробности — в `README.md` внутри архива.
           draft: false
           prerelease: false
