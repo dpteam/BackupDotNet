@@ -106,7 +106,12 @@ public class Settings
 
 	// ------------------------------------------------------------------ обновления
 
-	public bool UpdatesEnabled;
+	/// <summary>
+	/// Проверка обновлений включена. По умолчанию да: знать о новой версии
+	/// полезно всем, а сама проверка ничего не меняет — установка только
+	/// по отдельному разрешению <see cref="UpdatesAllowInstall"/>.
+	/// </summary>
+	public bool UpdatesEnabled = true;
 
 	public string UpdatesPath = "";
 

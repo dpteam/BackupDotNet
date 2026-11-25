@@ -287,7 +287,7 @@ public static class Program
 		Auth auth = new Auth(cfg.Settings.ConfigDir, cfg.Settings.WebSessionMinutes);
 		if (auth.GeneratedPassword.Length > 0)
 		{
-			WriteGeneratedPassword(root, auth.GeneratedPassword);
+			WriteGeneratedPassword(root, auth.GeneratedPassword, cfg.Settings.HttpPort);
 		}
 		AuditLog audit = new AuditLog(cfg.Settings.DataDir);
 		WebHost web = new WebHost(cfg.Settings, cfg, store, scheduler, auth, audit);
@@ -314,13 +314,22 @@ public static class Program
 		return 0;
 	}
 
-	public static void WriteGeneratedPassword(string root, string password)
+	public static void WriteGeneratedPassword(string root, string password, int port)
 	{
 		try
 		{
 			string dir = Path.Combine(root, "auth");
 			Directory.CreateDirectory(dir);
 			string path = Path.Combine(dir, "AGENT.md");
+
+			// Порт из настроек: в файле должен быть реальный адрес, а не всегда
+			// 8080. Иначе человек открывает ссылку и не понимает, почему
+			// интерфейс не отвечает.
+			if (port <= 0)
+			{
+				port = 8080;
+			}
+
 			StringBuilder sb = new StringBuilder();
 			sb.AppendLine("# " + Branding.Current.FullName + " — учётные данные агента");
 			sb.AppendLine();
@@ -330,7 +339,7 @@ public static class Program
 			sb.AppendLine("|---|---|---|");
 			sb.AppendLine("| `admin` | `" + password + "` | admin |");
 			sb.AppendLine();
-			sb.AppendLine("Веб-интерфейс: http://localhost:8080/");
+			sb.AppendLine("Веб-интерфейс: http://localhost:" + port + "/");
 			sb.AppendLine();
 			sb.AppendLine("Пароль можно сменить в интерфейсе (Настройки → Сменить пароль)");
 			sb.AppendLine("или вручную: `POST /api/password {\"username\":\"admin\",\"password\":\"...\"}`");

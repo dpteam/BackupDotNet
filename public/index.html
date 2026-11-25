@@ -55,22 +55,52 @@
         <span class="brand-text"><span class="bt-brand brand-part1"></span><span class="bt-rest brand-part2"></span></span>
       </a>
 
-      <nav class="nav">
-        <a href="#/dashboard" data-nav="dashboard"><i class="fas fa-tachometer-alt"></i> <span>Дашборд</span></a>
-        <a href="#/uptime" data-nav="uptime"><i class="fas fa-heartbeat"></i> <span>Доступность</span></a>
-        <a href="#/month" data-nav="month"><i class="fas fa-table"></i> <span>Таблица</span></a>
-        <a href="#/journal" data-nav="journal"><i class="fas fa-list-ul"></i> <span>Журнал</span></a>
-        <a href="#/users" data-nav="users" id="nav-users" class="hidden"><i class="fas fa-users"></i> <span>Пользователи</span></a>
-        <a href="#/deploy" data-nav="deploy" id="nav-deploy" class="hidden"><i class="fas fa-cloud-upload-alt"></i> <span>Развёртывание</span></a>
-        <a href="#/manage" data-nav="manage" id="nav-manage" class="hidden"><i class="fas fa-sliders-h"></i> <span>Управление</span></a>
-        <a href="#/logs" data-nav="logs" id="nav-logs" class="hidden"><i class="fas fa-file-alt"></i> <span>Журналы</span></a>
-        <a href="#/audit" data-nav="audit" id="nav-audit" class="hidden"><i class="fas fa-user-shield"></i> <span>Аудит</span></a>
-        <a href="#/backups" data-nav="backups"><i class="fas fa-archive"></i> <span>Бэкапы</span></a>
-        <a href="#/inventory" data-nav="inventory"><i class="fas fa-server"></i> <span>Инвентарь</span></a>
-        <a href="#/network" data-nav="network"><i class="fas fa-network-wired"></i> <span>Сеть</span></a>
-        <a href="#/health" data-nav="health"><i class="fas fa-stethoscope"></i> <span>Здоровье</span></a>
-        <a href="#/settings" data-nav="settings"><i class="fas fa-cog"></i> <span>Настройки</span></a>
-      </nav>
+      <div class="nav-scroll" id="nav-scroll">
+        <button class="nav-arrow left hidden" id="nav-prev" title="Назад"><i class="fas fa-chevron-left"></i></button>
+
+        <nav class="nav" id="nav">
+          <a href="#/dashboard" data-nav="dashboard"><i class="fas fa-tachometer-alt"></i> <span>Дашборд</span></a>
+
+          <div class="nav-group" data-group="monitor">
+            <button type="button" class="nav-group-btn"><i class="fas fa-heartbeat"></i> Мониторинг <i class="fas fa-chevron-down caret"></i></button>
+            <div class="nav-menu">
+              <a href="#/uptime" data-nav="uptime"><i class="fas fa-heartbeat"></i> Доступность</a>
+              <a href="#/month" data-nav="month"><i class="fas fa-table"></i> Таблица</a>
+              <a href="#/journal" data-nav="journal"><i class="fas fa-list-ul"></i> Журнал</a>
+              <a href="#/health" data-nav="health"><i class="fas fa-stethoscope"></i> Здоровье</a>
+            </div>
+          </div>
+
+          <div class="nav-group" data-group="infra">
+            <button type="button" class="nav-group-btn"><i class="fas fa-server"></i> Инфраструктура <i class="fas fa-chevron-down caret"></i></button>
+            <div class="nav-menu">
+              <a href="#/backups" data-nav="backups"><i class="fas fa-archive"></i> Бэкапы</a>
+              <a href="#/inventory" data-nav="inventory"><i class="fas fa-server"></i> Инвентарь</a>
+              <a href="#/network" data-nav="network"><i class="fas fa-network-wired"></i> Сеть</a>
+            </div>
+          </div>
+
+          <div class="nav-group" data-group="ops">
+            <button type="button" class="nav-group-btn"><i class="fas fa-sliders-h"></i> Управление <i class="fas fa-chevron-down caret"></i></button>
+            <div class="nav-menu">
+              <a href="#/deploy" data-nav="deploy" id="nav-deploy" class="hidden"><i class="fas fa-cloud-upload-alt"></i> Развёртывание</a>
+              <a href="#/manage" data-nav="manage" id="nav-manage" class="hidden"><i class="fas fa-sliders-h"></i> Управление</a>
+            </div>
+          </div>
+
+          <div class="nav-group" data-group="admin">
+            <button type="button" class="nav-group-btn"><i class="fas fa-user-shield"></i> Админ <i class="fas fa-chevron-down caret"></i></button>
+            <div class="nav-menu">
+              <a href="#/users" data-nav="users" id="nav-users" class="hidden"><i class="fas fa-users"></i> Пользователи</a>
+              <a href="#/logs" data-nav="logs" id="nav-logs" class="hidden"><i class="fas fa-file-alt"></i> Журналы</a>
+              <a href="#/audit" data-nav="audit" id="nav-audit" class="hidden"><i class="fas fa-user-shield"></i> Аудит</a>
+              <a href="#/settings" data-nav="settings"><i class="fas fa-cog"></i> Настройки</a>
+            </div>
+          </div>
+        </nav>
+
+        <button class="nav-arrow right hidden" id="nav-next" title="Вперёд"><i class="fas fa-chevron-right"></i></button>
+      </div>
 
       <div class="topbar-right">
         <button class="icon-btn bell-btn" id="btn-bell" title="Уведомления">

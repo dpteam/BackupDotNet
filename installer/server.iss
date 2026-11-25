@@ -93,7 +93,12 @@ Name: "desktopicon"; Description: "Ярлык на рабочем столе"; G
 
 [Files]
 ; Все файлы агента: exe, dll, public (веб-интерфейс), config-шаблоны.
-Source: "{#MyPayload}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+; branding.json исключён: при обновлении нельзя затирать настроенный бренд.
+Source: "{#MyPayload}\*"; DestDir: "{app}"; Excludes: "config\branding.json"; \
+    Flags: recursesubdirs createallsubdirs ignoreversion
+; Бренд кладём только если его ещё нет.
+Source: "{#MyPayload}\config\branding.json"; DestDir: "{app}\config"; \
+    Flags: onlyifdoesntexist skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MyProductName}"; Filename: "http://localhost:{code:GetPort}/"
@@ -125,6 +130,9 @@ var
   PortPage: TInputQueryWizardPage;
   PortValue: Integer;
   UninstallPort: Integer;
+  UpgradeMode: Boolean;
+  PrevVersion: string;
+  PrevLocation: string;
 
 { ---------------------------------------------------------------- утилиты }
 
@@ -152,6 +160,20 @@ end;
 function RunHidden(const FileName, Params: string; var Code: Integer): Boolean;
 begin
   Result := Exec(FileName, Params, '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
+{ Была ли программа уже установлена: берём запись деинсталлятора.
+  Она же даёт прежнюю версию и каталог — по ним понятно, обновляемся
+  мы или ставим с нуля. }
+function ReadPreviousInstall(var Version, Location: string): Boolean;
+var
+  Key: string;
+begin
+  Key := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppId}_is1';
+  Version := '';
+  Location := '';
+  Result := RegQueryStringValue(HKLM, Key, 'DisplayVersion', Version);
+  RegQueryStringValue(HKLM, Key, 'InstallLocation', Location);
 end;
 
 function ServiceExists(const Name: string): Boolean;
@@ -287,15 +309,24 @@ begin
   Result := ServiceState(Name) = 1;
 end;
 
-function ReadPortFile: Integer;
+function ReadPortFileFrom(const Dir: string): Integer;
 var
   { AnsiString, а не string: такова сигнатура LoadStringFromFile
     в Pascal Script, с UnicodeString он не компилируется. }
   S: AnsiString;
 begin
-  Result := 8080;
-  if LoadStringFromFile(ExpandConstant('{app}\config\install-port.txt'), S) then
-    Result := StrToIntDef(Trim(String(S)), 8080);
+  Result := 0;
+  if Dir = '' then
+    Exit;
+  if LoadStringFromFile(AddBackslash(Dir) + 'config\install-port.txt', S) then
+    Result := StrToIntDef(Trim(String(S)), 0);
+end;
+
+function ReadPortFile: Integer;
+begin
+  Result := ReadPortFileFrom(ExpandConstant('{app}'));
+  if Result <= 0 then
+    Result := 8080;
 end;
 
 { ---------------------------------------------------------------- страницы }
@@ -304,6 +335,27 @@ procedure InitializeWizard;
 var
   PortParam: string;
 begin
+  { Режим обновления: программа уже стоит. Тогда порт не спрашиваем —
+    он уже записан при первой установке, и менять его молча нельзя:
+    на старый порт выданы firewall и urlacl. }
+  UpgradeMode := ReadPreviousInstall(PrevVersion, PrevLocation);
+
+  if UpgradeMode then
+  begin
+    PortValue := ReadPortFileFrom(PrevLocation);
+    if PortValue <= 0 then
+      PortValue := 8080;
+
+    PortPage := nil;
+
+    MsgBox('Обнаружена установка ' + PrevVersion + ' в:' + #13#10 +
+      PrevLocation + #13#10 + #13#10 +
+      'Программа будет обновлена до {#MyVersion}. Настройки, компании ' +
+      'и журналы сохранятся. Порт остаётся прежним: ' + IntToStr(PortValue) + '.',
+      mbInformation, MB_OK);
+    Exit;
+  end;
+
   PortPage := CreateInputQueryPage(wpSelectDir,
     'Параметры сервера',
     'Порт веб-интерфейса',
@@ -330,7 +382,8 @@ var
   P: Integer;
 begin
   Result := True;
-  if CurPageID = PortPage.ID then
+  { В режиме обновления страницы порта нет — PortPage = nil. }
+  if (PortPage <> nil) and (CurPageID = PortPage.ID) then
   begin
     P := StrToIntDef(PortPage.Values[0], 0);
     if (P < 1) or (P > 65535) then
@@ -350,12 +403,13 @@ var
   Code: Integer;
 begin
   Result := '';
-  { Прошлую версию снимаем: иначе sc create вернёт «служба уже существует». }
+  { Прошлую версию снимаем: иначе sc create вернёт «служба уже существует».
+    Ждём реальной остановки — иначе процесс держит exe и файлы не заменятся. }
   if ServiceExists('{#MyServiceName}') then
   begin
-    StopService('{#MyServiceName}');
+    StopServiceAndWait('{#MyServiceName}');
     RunHidden(ExpandConstant('{sys}\sc.exe'), 'delete "{#MyServiceName}"', Code);
-    Sleep(1000);
+    Sleep(1500);
   end;
 end;
 
@@ -412,7 +466,11 @@ begin
     'failure "{#MyServiceName}" reset= 86400 actions= restart/60000/restart/60000/restart/60000',
     Code);
 
-  { Firewall и urlacl: без них служба не сможет слушать порт на всех адресах. }
+  { Firewall и urlacl: без них служба не сможет слушать порт на всех адресах.
+    Правило сначала удаляем: при обновлении оно уже есть, и «add» создал бы
+    дубликат. }
+  RunHidden(ExpandConstant('{sys}\netsh.exe'),
+    'advfirewall firewall delete rule name="{#MyProductName}"', Code);
   Rules := 'advfirewall firewall add rule name="{#MyProductName}" dir=in action=allow protocol=TCP localport=' +
     IntToStr(PortValue);
   RunHidden(ExpandConstant('{sys}\netsh.exe'), Rules, Code);

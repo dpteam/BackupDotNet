@@ -44,7 +44,7 @@ public class AgentService : ServiceBase
 			if (auth.GeneratedPassword.Length > 0)
 			{
 				Log.Warn("Создан пользователь admin, пароль: " + auth.GeneratedPassword);
-				Program.WriteGeneratedPassword(_root, auth.GeneratedPassword);
+				Program.WriteGeneratedPassword(_root, auth.GeneratedPassword, cfg.Settings.HttpPort);
 			}
 			AuditLog audit = new AuditLog(cfg.Settings.DataDir);
 			_web = new WebHost(cfg.Settings, cfg, _store, _scheduler, auth, audit);

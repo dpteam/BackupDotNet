@@ -650,10 +650,133 @@
   }
 
   function setActiveNav() {
+    // Пункт может быть как верхним уровнем, так и внутри категории —
+    // подсвечиваем и его, и саму категорию.
     $$('.nav a').forEach(function (a) {
       var nav = a.getAttribute('data-nav');
       a.classList.toggle('active', nav === state.route);
     });
+
+    $$('.nav-group').forEach(function (g) {
+      var hasActive = !!g.querySelector('a.active');
+      g.classList.toggle('has-active', hasActive);
+      if (!hasActive) g.classList.remove('open');
+    });
+
+    // Категорию без видимых пунктов показывать незачем: у viewer
+    // в «Админ» остались бы только настройки, у operator — ничего.
+    $$('.nav-group').forEach(function (g) {
+      var links = g.querySelectorAll('.nav-menu a');
+      var visible = 0;
+      for (var i = 0; i < links.length; i++) {
+        if (!links[i].classList.contains('hidden')) visible++;
+      }
+      g.classList.toggle('hidden', visible === 0);
+    });
+
+    updateNavArrows();
+  }
+
+  /** Ставит выпадающее меню под его кнопкой.
+      Меню position:fixed, потому что .nav прокручивается по горизонтали
+      и обрезал бы абсолютно позиционированное меню. */
+  function positionNavMenu(group) {
+    var btn = group.querySelector('.nav-group-btn');
+    var menu = group.querySelector('.nav-menu');
+    if (!btn || !menu) return;
+
+    var r = btn.getBoundingClientRect();
+    menu.style.top = Math.round(r.bottom + 6) + 'px';
+    menu.style.left = Math.round(r.left) + 'px';
+
+    // Не вылезаем за правый край окна.
+    requestAnimationFrame(function () {
+      var mw = menu.offsetWidth;
+      var maxLeft = window.innerWidth - mw - 12;
+      if (r.left > maxLeft) {
+        menu.style.left = Math.round(Math.max(12, maxLeft)) + 'px';
+      }
+    });
+  }
+
+  /** Стрелки скролла показываем только когда меню не влезает. */
+  function updateNavArrows() {
+    var nav = document.getElementById('nav');
+    var prev = document.getElementById('nav-prev');
+    var next = document.getElementById('nav-next');
+    if (!nav || !prev || !next) return;
+
+    var overflow = nav.scrollWidth > nav.clientWidth + 2;
+    prev.classList.toggle('hidden', !overflow || nav.scrollLeft <= 2);
+    next.classList.toggle('hidden', !overflow ||
+      nav.scrollLeft + nav.clientWidth >= nav.scrollWidth - 2);
+  }
+
+  function bindNav() {
+    // Выпадающие категории: открытие по клику, закрытие по клику мимо
+    // и по Esc. Наведение тоже открывает — так быстрее.
+    $$('.nav-group').forEach(function (g) {
+      var btn = g.querySelector('.nav-group-btn');
+      if (!btn) return;
+
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var wasOpen = g.classList.contains('open');
+        $$('.nav-group').forEach(function (x) { x.classList.remove('open'); });
+        if (!wasOpen) {
+          g.classList.add('open');
+          positionNavMenu(g);
+        }
+      });
+
+      g.addEventListener('mouseenter', function () {
+        if (window.matchMedia('(hover: hover)').matches) {
+          $$('.nav-group').forEach(function (x) { x.classList.remove('open'); });
+          g.classList.add('open');
+          positionNavMenu(g);
+        }
+      });
+      g.addEventListener('mouseleave', function () {
+        if (window.matchMedia('(hover: hover)').matches) {
+          g.classList.remove('open');
+        }
+      });
+    });
+
+    document.addEventListener('click', function (e) {
+      // Клик по самой кнопке категории обрабатывает её собственный
+      // обработчик: иначе этот закрывает только что открытое меню.
+      if (e.target.closest && e.target.closest('.nav-group-btn')) return;
+      $$('.nav-group').forEach(function (x) { x.classList.remove('open'); });
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        $$('.nav-group').forEach(function (x) { x.classList.remove('open'); });
+      }
+    });
+
+    // Скролл: колесом по горизонтали и стрелками.
+    var nav = document.getElementById('nav');
+    var prev = document.getElementById('nav-prev');
+    var next = document.getElementById('nav-next');
+
+    if (nav) {
+      nav.addEventListener('scroll', updateNavArrows);
+      nav.addEventListener('wheel', function (e) {
+        if (nav.scrollWidth <= nav.clientWidth + 2) return;
+        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+          nav.scrollLeft += e.deltaY;
+          e.preventDefault();
+        }
+      }, { passive: false });
+    }
+
+    if (prev) prev.addEventListener('click', function () { nav.scrollLeft -= 160; });
+    if (next) next.addEventListener('click', function () { nav.scrollLeft += 160; });
+
+    window.addEventListener('resize', updateNavArrows);
   }
 
   function route() {
@@ -9638,6 +9761,7 @@
     return api('/api/summary');
   }).then(function () {
     hideLogin();
+    bindNav();
     route();
   }).catch(function () {
     // нужна авторизация

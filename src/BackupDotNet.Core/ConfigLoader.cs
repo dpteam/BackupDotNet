@@ -109,10 +109,22 @@ public class ConfigLoader
 	{
 		Companies.Clear();
 		string dir = Path.Combine(ConfigDir, "companies");
+
+		// Каталог создаём сами: после установки его нет, и «нет каталога»
+		// выглядело как проблема конфигурации, хотя это нормальный старт
+		// с нуля. Отсутствие каталога — не ошибка, ошибка — не суметь
+		// его создать.
 		if (!Directory.Exists(dir))
 		{
-			LoadErrors.Add("нет каталога " + dir);
-			return;
+			try
+			{
+				Directory.CreateDirectory(dir);
+			}
+			catch (Exception ex)
+			{
+				LoadErrors.Add("не удалось создать " + dir + ": " + ex.Message);
+				return;
+			}
 		}
 		List<string> files = new List<string>(Directory.GetFiles(dir, "*.json"));
 		files.Sort(StringComparer.OrdinalIgnoreCase);

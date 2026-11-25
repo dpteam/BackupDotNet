@@ -78,10 +78,10 @@
     ]
   },
   "updates": {
-    "enabled": false,
+    "enabled": true,
     "source": "local",
     "path": "\\\\fileserver\\BackupDotNet\\latest",
-    "githubRepo": "",
+    "githubRepo": "dpteam/BackupDotNet",
     "githubApiBase": "",
     "githubTokenSecret": "github-token",
     "allowInstall": false,

@@ -105,12 +105,75 @@ Type: dirifempty; Name: "{app}\config"
 [Code]
 var
   ConnPage: TInputQueryWizardPage;
+  UpgradeMode: Boolean;
+  PrevVersion: string;
+  PrevLocation: string;
 
 { ---------------------------------------------------------------- утилиты }
 
 function RunHidden(const FileName, Params: string; var Code: Integer): Boolean;
 begin
   Result := Exec(FileName, Params, '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
+{ Была ли программа уже установлена: запись деинсталлятора даёт версию
+  и каталог. По ним понятно, обновляемся мы или ставим с нуля. }
+function ReadPreviousInstall(var Version, Location: string): Boolean;
+var
+  Key: string;
+begin
+  Key := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAgentAppId}_is1';
+  Version := '';
+  Location := '';
+  Result := RegQueryStringValue(HKLM, Key, 'DisplayVersion', Version);
+  RegQueryStringValue(HKLM, Key, 'InstallLocation', Location);
+end;
+
+{ Позиция подстроки, начиная с Start. В Pascal Script нет PosEx,
+  поэтому считаем сами. }
+function PosFrom(const Sub, S: string; Start: Integer): Integer;
+var
+  I: Integer;
+  Tail: string;
+begin
+  Result := 0;
+  if Start < 1 then
+    Start := 1;
+  if Start > Length(S) then
+    Exit;
+  Tail := Copy(S, Start, Length(S) - Start + 1);
+  I := Pos(Sub, Tail);
+  if I > 0 then
+    Result := Start + I - 1;
+end;
+
+{ Достаёт строковое значение из JSON-файла: "ключ": "значение".
+  Полноценный разбор здесь не нужен — файл пишет сам установщик,
+  формат известен. }
+function ReadJsonStr(const FileName, Key, Default: string): string;
+var
+  Raw: AnsiString;
+  S: string;
+  P, Q: Integer;
+begin
+  Result := Default;
+  if not LoadStringFromFile(FileName, Raw) then
+    Exit;
+  S := String(Raw);
+  P := Pos('"' + Key + '"', S);
+  if P <= 0 then
+    Exit;
+  P := P + Length(Key) + 2;
+  P := PosFrom(':', S, P);
+  if P <= 0 then
+    Exit;
+  P := PosFrom('"', S, P);
+  if P <= 0 then
+    Exit;
+  Q := PosFrom('"', S, P + 1);
+  if Q <= P then
+    Exit;
+  Result := Copy(S, P + 1, Q - P - 1);
 end;
 
 function ServiceExists(const Name: string): Boolean;
@@ -255,7 +318,10 @@ end;
 procedure InitializeWizard;
 var
   CentralParam, TokenParam, AgentParam: string;
+  PrevRemote: string;
 begin
+  UpgradeMode := ReadPreviousInstall(PrevVersion, PrevLocation);
+
   ConnPage := CreateInputQueryPage(wpSelectDir,
     'Подключение к серверу',
     'Куда агент отправляет данные',
@@ -268,15 +334,38 @@ begin
 
   { Параметры для тихой установки из GPO:
     /CENTRAL=https://server:8080 /TOKEN=... /AGENT=имя }
-  CentralParam := ExpandConstant('{param:CENTRAL|https://}');
+  CentralParam := ExpandConstant('{param:CENTRAL|}');
   TokenParam := ExpandConstant('{param:TOKEN|}');
   AgentParam := ExpandConstant('{param:AGENT|}');
+
+  { Обновление: подставляем то, что уже настроено. Человеку не нужно
+    заново искать токен — он остался в remote.json прошлой установки. }
+  if UpgradeMode then
+  begin
+    PrevRemote := AddBackslash(PrevLocation) + 'config\remote.json';
+    if CentralParam = '' then
+      CentralParam := ReadJsonStr(PrevRemote, 'centralUrl', '');
+    if TokenParam = '' then
+      TokenParam := ReadJsonStr(PrevRemote, 'token', '');
+    if AgentParam = '' then
+      AgentParam := ReadJsonStr(PrevRemote, 'agentId', '');
+  end;
+
+  if CentralParam = '' then
+    CentralParam := 'https://';
   if AgentParam = '' then
     AgentParam := GetComputerNameString();
 
   ConnPage.Values[0] := CentralParam;
   ConnPage.Values[1] := TokenParam;
   ConnPage.Values[2] := AgentParam;
+
+  if UpgradeMode then
+    MsgBox('Обнаружена установка ' + PrevVersion + ' в:' + #13#10 +
+      PrevLocation + #13#10 + #13#10 +
+      'Программа будет обновлена до {#MyVersion}. Адрес сервера, токен ' +
+      'и каталог данных сохранены — проверьте их на следующем шаге.',
+      mbInformation, MB_OK);
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
