@@ -39,6 +39,12 @@
 #ifndef MyAgentAppId
   #define MyAgentAppId "{{3C7B9E1A-6D4F-4B2C-8A5E-7F1D3C9B2A64}"
 #endif
+#ifndef MyIcon
+  #define MyIcon "..\assets\agent-icon.ico"
+#endif
+#ifndef MyWizardImage
+  #define MyWizardImage "..\assets\agent-icon-wizard.png"
+#endif
 
 [Setup]
 AppId={#MyAgentAppId}
@@ -60,6 +66,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyProductName} — агент
 UninstallDisplayIcon={app}\BackupDotNet.exe
+SetupIconFile={#MyIcon}
+WizardSmallImageFile={#MyWizardImage}
 VersionInfoVersion={#MyVersion}
 VersionInfoProductName={#MyProductName}
 VersionInfoProductVersion={#MyVersion}

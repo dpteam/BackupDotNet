@@ -42,6 +42,12 @@
 #ifndef MyAppId
   #define MyAppId "{{8F3A1C2D-4B5E-4A7C-9D1E-2F3A4B5C6D7E}"
 #endif
+#ifndef MyIcon
+  #define MyIcon "..\assets\server-icon.ico"
+#endif
+#ifndef MyWizardImage
+  #define MyWizardImage "..\assets\server-icon-wizard.png"
+#endif
 
 [Setup]
 AppId={#MyAppId}
@@ -63,6 +69,10 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyProductName} — сервер
 UninstallDisplayIcon={app}\BackupDotNet.exe
+; Иконки: SetupIconFile — значок самого установщика в проводнике,
+; WizardSmallImageFile — картинка в заголовке мастера.
+SetupIconFile={#MyIcon}
+WizardSmallImageFile={#MyWizardImage}
 ; Свойства файла в проводнике: без этого FileVersion пустой.
 VersionInfoVersion={#MyVersion}
 VersionInfoProductName={#MyProductName}
