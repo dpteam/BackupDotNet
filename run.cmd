@@ -18,6 +18,16 @@ if not exist "BackupDotNet.exe" (
 )
 
 if "%~1"=="" (
+  rem Предупреждаем заранее: без прав администратора HTTP.sys не отдаст
+  rem порт на все адреса, и сервер отступит на localhost. Тогда интерфейс
+  rem открывается только здесь, а с других машин приходит 400.
+  net session >nul 2>&1
+  if errorlevel 1 (
+    echo [i] Запуск без прав администратора: сервер сможет занять порт
+    echo     только на localhost. Для доступа по сети один раз запустите
+    echo     allow-network.cmd от имени администратора.
+    echo.
+  )
   BackupDotNet.exe --console
 ) else (
   BackupDotNet.exe %*

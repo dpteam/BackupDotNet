@@ -249,7 +249,24 @@ public class VeeamRestCollector : ICollector
 			}
 			else if (string.Equals(result, "Warning", StringComparison.OrdinalIgnoreCase))
 			{
-				r.Fail((resultMessage.Length > 0) ? ("предупреждение: " + resultMessage) : "последняя сессия завершилась с предупреждением");
+				// Warning — это «задание отработало, но с замечаниями»: копия
+				// создана. Поэтому время сессии считаем успехом (иначе проверка
+				// свежести даёт FAIL и на проде это ложная тревога), а текст
+				// замечания кладём в ошибки — планировщик сделает из этого WARN.
+				if (!r.LastSuccess.HasValue)
+				{
+					DateTime? t3 = BackupRun.ParseDateNullable(Json.Get(latest, "endTime"));
+					if (!t3.HasValue)
+					{
+						t3 = BackupRun.ParseDateNullable(Json.Get(latest, "creationTime"));
+					}
+					r.LastSuccess = t3;
+				}
+				string warnText = (resultMessage.Length > 0)
+					? ("предупреждение Veeam: " + resultMessage)
+					: "последняя сессия завершилась с предупреждением";
+				r.Errors.Add(warnText);
+				r.Message = warnText;
 			}
 			else if (string.Equals(result, "Failed", StringComparison.OrdinalIgnoreCase))
 			{

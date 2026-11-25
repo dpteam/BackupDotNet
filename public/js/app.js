@@ -314,6 +314,12 @@
 
   function pad(n) { return n < 10 ? '0' + n : String(n); }
 
+  /** Порт из префикса вида http://localhost:8080/ — для подсказок в тексте. */
+  function bindPort(prefix) {
+    var m = String(prefix || '').match(/:(\d+)\s*\/?\s*$/);
+    return m ? m[1] : '8080';
+  }
+
   function fmtDateTime(iso) {
     if (!iso) return '—';
     var d = new Date(iso);
@@ -827,6 +833,41 @@
           '</ul></div></div>';
       }
 
+      // Мониторинг без уведомлений — это дашборд, который никто не смотрит.
+      // Показываем это до первого падения, а не после.
+      if (data.notifications && (!data.notifications.enabled || !data.notifications.anyChannel)) {
+        var nt = data.notifications;
+        html += '<div class="card" style="border-color:var(--warn)">' +
+          '<div class="card-head"><i class="fas fa-bell-slash" style="color:var(--warn)"></i> Уведомления не настроены</div>' +
+          '<div class="card-body" style="font-size:12px">' +
+          '<p style="margin:0 0 8px">' +
+          (!nt.enabled
+            ? 'Уведомления выключены — о падении бэкапа вы узнаете, только открыв интерфейс.'
+            : 'Уведомления включены, но ни один канал не заполнен — отправлять некуда.') +
+          '</p>' +
+          '<p style="margin:0" class="muted">Настройте SMTP или Telegram: ' +
+          '<a href="#/settings">Настройки</a> → «Уведомления». ' +
+          'Проверить отправку можно кнопкой «Тест» там же.</p>' +
+          '</div></div>';
+      }
+
+      // Сервер, слушающий только localhost, выглядит рабочим здесь и
+      // «сломанным» с любой другой машины: по IP приходит 400 от HTTP.sys.
+      // Поэтому предупреждаем сразу, а не после разбора «странной ошибки».
+      if (data.localOnly) {
+        html += '<div class="card" style="border-color:var(--warn)">' +
+          '<div class="card-head"><i class="fas fa-plug" style="color:var(--warn)"></i> Сервер доступен только с этой машины</div>' +
+          '<div class="card-body" style="font-size:12px">' +
+          '<p style="margin:0 0 8px">Порт занят на <code>localhost</code> (' + esc(data.bind || '') + '), ' +
+          'поэтому браузер и агенты с других машин до интерфейса не дойдут — по IP вернётся 400.</p>' +
+          '<p style="margin:0 0 8px" class="muted">Причина обычно одна: нет разрешения на порт (urlacl) ' +
+          'или процесс запущен без прав администратора, и сервер отступил на локальную привязку.</p>' +
+          '<p style="margin:0" class="muted">Лечится так: запустить от администратора или выдать разрешение — ' +
+          '<code>netsh http add urlacl url=http://+:' + esc(bindPort(data.bind)) +
+          '/ user="NT AUTHORITY\\SYSTEM"</code>, затем перезапустить службу.</p>' +
+          '</div></div>';
+      }
+
       html += '<div class="stats">' +
         stat('ok', 'Успешно', t.ok, 'заданий') +
         stat('warn', 'Внимание', t.warn, 'заданий') +
@@ -857,7 +898,22 @@
       html += '<div class="card-body">';
 
       if (!data.companies.length) {
-        html += '<p class="muted">Пока нет ни одной компании. Добавьте файл в <code>config/companies/</code>.</p>';
+        // Первый запуск. Раньше здесь было «добавьте файл в config/companies/» —
+        // то есть совет для того, кто читает исходники, а не для того, кто
+        // ставит продукт на прод. Ведём по шагам прямо из интерфейса.
+        html += '<div style="padding:4px 0 2px">' +
+          '<p class="muted" style="margin:0 0 12px">Мониторинг ещё не настроен. Четыре шага до первых данных:</p>' +
+          '<ol style="margin:0;padding-left:20px;font-size:12.5px;line-height:1.9">' +
+          '<li>Создать компанию — это контейнер для источников.' +
+            (canWrite() ? ' <button class="btn btn-sm btn-primary" id="btn-first-company">' +
+              '<i class="fas fa-plus"></i> Создать компанию</button>' : '') + '</li>' +
+          '<li>Добавить источники внутри компании: файлы бэкапов, Veeam, доступность, железо. ' +
+            'Мастер спросит по-человечески и проверит подключение до сохранения.</li>' +
+          '<li>Включить уведомления — иначе о падении узнаете, только открыв интерфейс: ' +
+            '<a href="#/settings">Настройки</a> → SMTP или Telegram.</li>' +
+          '<li>Дождаться первого прогона (до минуты) — статусы появятся на «Дашборде» ' +
+            'и в «Таблице» по дням.</li>' +
+          '</ol></div>';
       } else {
         html += '<div class="company-grid">';
         data.companies.forEach(function (c) {
@@ -905,6 +961,10 @@
 
       var addBtn = document.getElementById('btn-add-company');
       if (addBtn) addBtn.addEventListener('click', function () { location.hash = '#/company/new'; });
+
+      // Кнопка из подсказки первого запуска — тот же переход, что и «Добавить».
+      var firstBtn = document.getElementById('btn-first-company');
+      if (firstBtn) firstBtn.addEventListener('click', function () { location.hash = '#/company/new'; });
 
       var expBtn = document.getElementById('btn-export-companies');
       if (expBtn) expBtn.addEventListener('click', function () {
@@ -9455,10 +9515,9 @@
         html += '<div class="deploy-grid">' +
           '<label class="fld"><span>Цель</span><select id="mg-target">' +
           manageState.targets.map(function (t) {
-            var label = t.name + (t.host && t.kind === 'agent' ? ' — ' + t.host : '');
+            var label = t.name + (t.kind === 'agent' ? (t.host ? ' — ' + t.host : ' — адрес неизвестен') : '');
             return '<option value="' + esc(t.id) + '"' +
-              (t.id === manageState.target ? ' selected' : '') +
-              (t.kind === 'agent' && !t.host ? ' disabled' : '') + '>' + esc(label) + '</option>';
+              (t.id === manageState.target ? ' selected' : '') + '>' + esc(label) + '</option>';
           }).join('') + '</select></label>' +
           '<label class="fld"><span>&nbsp;</span>' +
           '<div class="muted" style="font-size:11.5px;padding-top:6px">' +
@@ -9466,6 +9525,21 @@
             ? 'WinRM доступ настроен'
             : '<span style="color:var(--warn)">учётные данные WinRM не заданы — настройте на странице «Развёртывание»</span>') +
           '</div></label></div>';
+
+        // Агентов нет — это не «сломанный список», а пустой реестр.
+        // Раньше такие записи просто прятались в выключенных пунктах, и было
+        // непонятно, почему цель не выбирается.
+        var agentTargets = manageState.targets.filter(function (t) { return t.kind === 'agent'; });
+        if (!agentTargets.length) {
+          html += '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' +
+            'Удалённых агентов пока нет: создайте запись на странице «Развёртывание» → ' +
+            '«Новый агент», установите агент — после первого отчёта появится адрес, ' +
+            'и он станет доступен как цель.</p>';
+        } else if (!agentTargets.some(function (t) { return t.host; })) {
+          html += '<p class="muted" style="font-size:11.5px;margin:10px 0 0">' +
+            'Ни один агент ещё не выходил на связь: адреса нет, операции на него отправить нельзя. ' +
+            'Проверьте службу агента и адрес центральной машины в его конфиге.</p>';
+        }
 
         html += '</div></div>';
 
@@ -9531,6 +9605,13 @@
       });
   }
 
+  // Подпись цели: у агента это имя записи, у локальной машины — её имя.
+  // Нужна и в подтверждении, и в тексте «введите имя цели».
+  function manageTargetLabel(id) {
+    var t = (manageState.targets || []).filter(function (x) { return x.id === id; })[0];
+    return t ? t.name : (id || '');
+  }
+
   function openOpForm(opId) {
     var ops = (manageState.catalog || {}).operations || [];
     var op = ops.filter(function (o) { return o.id === opId; })[0];
@@ -9552,9 +9633,11 @@
     });
 
     if (op.needsConfirmText) {
+      var tgt = manageTargetLabel(manageState.target);
       h += '<label class="fld" style="display:block;margin-bottom:8px">' +
         '<span style="color:var(--fail)">Подтверждение: введите имя цели</span>' +
-        '<input type="text" data-mg-confirm="1" placeholder="' + esc(manageState.target) + '">' +
+        '<input type="text" data-mg-confirm="1" placeholder="' + esc(tgt) + '">' +
+        '<span class="muted" style="font-size:11px">Нужно вписать: ' + esc(tgt) + '</span>' +
         '</label>';
     }
 
@@ -9635,7 +9718,7 @@
       h += '<tr>' +
         '<td style="font-size:11px;white-space:nowrap">' + esc(fmtTimeSec(j.requestedAt)) + '</td>' +
         '<td style="font-size:11.5px">' + esc(j.opTitle || j.op) + '</td>' +
-        '<td style="font-size:11.5px">' + esc(j.target) + '</td>' +
+        '<td style="font-size:11.5px">' + esc(j.targetName || j.target) + '</td>' +
         '<td><span class="badge ' + cls + '">' + esc(label) + '</span></td>' +
         '<td style="white-space:nowrap">' +
           (j.status === 'pending'
@@ -9689,7 +9772,7 @@
       '<div class="modal modal-wide">' +
       '<h3><i class="fas fa-list"></i> ' + esc(j.opTitle || j.op) + '</h3>' +
       '<p class="muted" style="font-size:11.5px;margin-top:0">' +
-        esc(j.target) + ' · ' + esc(j.status) +
+        esc(j.targetName || j.target) + ' · ' + esc(j.status) +
         (j.durationMs ? ' · ' + Math.round(j.durationMs / 1000) + ' с' : '') +
         (j.requestedBy ? ' · запросил ' + esc(j.requestedBy) : '') +
         (j.approvedBy && j.approvedBy !== j.requestedBy ? ' · подтвердил ' + esc(j.approvedBy) : '') +

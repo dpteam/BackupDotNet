@@ -78,6 +78,12 @@ public class ApiHandler
 				h["ok"] = true;
 				h["version"] = _scheduler.Version;
 				h["time"] = DateTime.Now;
+				// Где реально слушаем: если остался только localhost, агенты
+				// и браузеры с других машин до сервера не дойдут, и по IP
+				// придёт 400 от HTTP.sys. Пусть это видно снаружи, а не
+				// выясняется по «непонятной ошибке» на клиенте.
+				h["bind"] = _prefix;
+				h["localOnly"] = IsLocalOnlyPrefix(_prefix);
 				WriteJson(ctx, h, 200);
 				return;
 			}
@@ -912,6 +918,20 @@ public class ApiHandler
 		result["totals"] = totals;
 		result["companies"] = companies;
 		result["configErrors"] = ToList(_config.LoadErrors);
+		// Видно ли сервер по сети: при локальной привязке агенты и удалённые
+		// браузеры до него не дойдут, а по IP придёт 400 от HTTP.sys.
+		result["bind"] = _prefix;
+		result["localOnly"] = IsLocalOnlyPrefix(_prefix);
+		// Состояние уведомлений: без канала мониторинг узнаёт о падении только
+		// когда человек сам откроет интерфейс. Правила «канал настроен» берём
+		// из Notifier, чтобы не разъезжались с тем, что реально отправляет.
+		Notifier notifier = _scheduler?.Notifier;
+		Dictionary<string, object> notify = Json.Obj();
+		notify["enabled"] = _settings.NotifyEnabled;
+		notify["smtp"] = notifier != null && notifier.SmtpConfigured;
+		notify["telegram"] = notifier != null && notifier.TelegramConfigured;
+		notify["anyChannel"] = notifier != null && notifier.AnyChannelEnabled;
+		result["notifications"] = notify;
 		WriteJson(ctx, result, 200);
 	}
 
@@ -3581,6 +3601,21 @@ public class ApiHandler
 		{
 			return "http://" + Environment.MachineName + ":" + _settings.HttpPort;
 		}
+	}
+
+	/// <summary>
+	/// Слушает ли сервер только эту машину. Признак — префикс с localhost
+	/// или петлёй: HTTP.sys в таком случае отвечает 400 на запрос по IP,
+	/// и снаружи это выглядит как «сервер сломан», хотя он просто не слушает.
+	/// </summary>
+	private static bool IsLocalOnlyPrefix(string prefix)
+	{
+		if (string.IsNullOrEmpty(prefix))
+		{
+			return false;
+		}
+		string p = prefix.ToLowerInvariant();
+		return p.Contains("//localhost") || p.Contains("//127.0.0.1");
 	}
 
 	private void HandleAgentsList(HttpListenerContext ctx, SessionInfo si)
@@ -6461,14 +6496,39 @@ public class ApiHandler
 			WriteJson(ctx, Json.Obj("ok", false, "error", "неизвестная операция: " + opId), 400);
 			return;
 		}
+		// Цель в списке — запись агента (её id), а WinRM нужен адрес.
+		// Раньше id уходил в WinRM как имя машины: работало только когда
+		// имя в реестре случайно совпадало с DNS-именем.
+		string displayTarget = target;
+		AgentRegistry.RemoteAgent agent = null;
+		foreach (AgentRegistry.RemoteAgent a in _agents.All)
+		{
+			if (string.Equals(a.Id, target, StringComparison.OrdinalIgnoreCase))
+			{
+				agent = a;
+				break;
+			}
+		}
+		if (agent != null)
+		{
+			if (agent.LastIp.Length == 0)
+			{
+				WriteJson(ctx, Json.Obj("ok", false, "error",
+					"агент «" + agent.Name + "» ещё не выходил на связь — его адрес неизвестен. " +
+					"Проверьте, что служба агента запущена и ей задан адрес центральной машины."), 400);
+				return;
+			}
+			displayTarget = agent.Name;
+			target = agent.LastIp;
+		}
 		Dictionary<string, string> prms = ReadParams(body);
-		OpJob job = _ops.Submit(def, target, prms, si.User, confirmText, out var error);
+		OpJob job = _ops.Submit(def, target, prms, si.User, confirmText, out var error, displayTarget);
 		if (job == null)
 		{
 			WriteJson(ctx, Json.Obj("ok", false, "error", error), 400);
 			return;
 		}
-		_audit.Write(si.User, "manage.submit", job.Id, def.Id + " → " + target + " (" + job.Status + ")");
+		_audit.Write(si.User, "manage.submit", job.Id, def.Id + " → " + job.TargetName + " (" + job.Status + ")");
 		Dictionary<string, object> d = Json.Obj();
 		d["ok"] = true;
 		d["job"] = job.ToJson();

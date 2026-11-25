@@ -14,6 +14,14 @@ public class OpJob
 
 	public string Target = "";
 
+	/// <summary>
+	/// Цель так, как её видит человек: имя агента или подпись машины.
+	/// <see cref="Target"/> — то, куда реально идёт WinRM (адрес), а это поле
+	/// нужно для подтверждения и журнала: вводить IP вместо имени агента
+	/// неудобно и легко ошибиться.
+	/// </summary>
+	public string TargetName = "";
+
 	public string Risk = "low";
 
 	public Dictionary<string, string> Params = new Dictionary<string, string>();
@@ -47,6 +55,7 @@ public class OpJob
 			d["op"] = Op;
 			d["opTitle"] = OpTitle;
 			d["target"] = Target;
+			d["targetName"] = (TargetName.Length > 0) ? TargetName : Target;
 			d["risk"] = Risk;
 			d["status"] = Status;
 			d["requestedBy"] = RequestedBy;

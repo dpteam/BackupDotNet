@@ -52,7 +52,7 @@ public class OpQueue
 		_stopping = true;
 	}
 
-	public OpJob Submit(OpDef def, string target, Dictionary<string, string> prms, string user, string confirmText, out string error)
+	public OpJob Submit(OpDef def, string target, Dictionary<string, string> prms, string user, string confirmText, out string error, string displayTarget = "")
 	{
 		error = "";
 		if (def == null)
@@ -71,9 +71,12 @@ public class OpQueue
 			error = "не задана цель";
 			return null;
 		}
-		if (def.NeedsConfirmText && !string.Equals((confirmText ?? "").Trim(), target, StringComparison.OrdinalIgnoreCase))
+		// Подтверждение сверяем с тем, что человек видит на экране: у агента
+		// это имя записи, а не адрес, на который пойдёт WinRM.
+		string confirmAgainst = (string.IsNullOrEmpty(displayTarget) ? target : displayTarget);
+		if (def.NeedsConfirmText && !string.Equals((confirmText ?? "").Trim(), confirmAgainst, StringComparison.OrdinalIgnoreCase))
 		{
-			error = "для этой операции введите имя машины (" + target + ") в поле подтверждения";
+			error = "для этой операции введите имя машины (" + confirmAgainst + ") в поле подтверждения";
 			return null;
 		}
 		OpJob job = new OpJob();
@@ -81,6 +84,7 @@ public class OpQueue
 		job.Op = def.Id;
 		job.OpTitle = def.Title;
 		job.Target = target;
+		job.TargetName = (string.IsNullOrEmpty(displayTarget) ? target : displayTarget);
 		job.Risk = def.Risk;
 		job.RequestedBy = user ?? "";
 		job.Params = new Dictionary<string, string>();
