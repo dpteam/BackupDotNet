@@ -91,6 +91,25 @@ internal static class Program
 				}
 			},
 
+			// Проверка связи с удалённой машиной: ничего не меняет.
+			{ "/api/remote/test", delegate (string body)
+				{
+					Dictionary<string, object> d = ParseJson(body);
+					string host = Json.GetStr(d, "host", "").Trim();
+					string user = Json.GetStr(d, "user", "").Trim();
+					string password = Json.GetStr(d, "password", "");
+					string mode = Json.GetStr(d, "mode", "smb");
+
+					SmbInstaller.Outcome outcome = mode == "winrm"
+						? WinRmInstaller.Test(host, user, password,
+							Json.Int(Json.Get(d, "port"), 5985),
+							Json.Bool(Json.Get(d, "https"), dflt: false))
+						: SmbInstaller.Test(host, user, password);
+
+					return Json.Write(outcome.ToJson());
+				}
+			},
+
 			// Запуск установки: отвечает сразу, дальше страница опрашивает прогресс.
 			{ "/api/install/local", delegate (string body)
 				{
@@ -104,6 +123,21 @@ internal static class Program
 						d["note"] = "установка уже идёт";
 					}
 					return Json.Write(d);
+				}
+			},
+
+			{ "/api/install/remote", delegate (string body)
+				{
+					Dictionary<string, object> d = ParseJson(body);
+					bool started = runner.StartRemote(d);
+					Dictionary<string, object> res = Json.Obj();
+					res["ok"] = true;
+					res["started"] = started;
+					if (!started)
+					{
+						res["note"] = "установка уже идёт";
+					}
+					return Json.Write(res);
 				}
 			},
 
@@ -176,6 +210,23 @@ internal static class Program
 		SetupEngine.Result result = engine.InstallLocal(request, delegate { });
 		Console.WriteLine(result.Ok ? "Установлено: " + result.Message : "Ошибка: " + result.Message);
 		return result.Ok ? 0 : 1;
+	}
+
+	/// <summary>Разбирает тело запроса в словарь, не бросая исключений.</summary>
+	private static Dictionary<string, object> ParseJson(string body)
+	{
+		try
+		{
+			if (!string.IsNullOrWhiteSpace(body))
+			{
+				return Json.ParseObject(body);
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Warn("Мастер, разбор JSON: " + ex.Message);
+		}
+		return Json.Obj();
 	}
 
 	/// <summary>Разбирает тело запроса страницы в параметры установки.</summary>

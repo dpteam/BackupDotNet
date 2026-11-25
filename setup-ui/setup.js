@@ -86,7 +86,12 @@
 
     if (step === 1) $('foot-hint').textContent = '';
     if (step === 2) $('foot-hint').textContent = 'Способ можно поменять до установки';
-    if (step === 3) $('foot-hint').textContent = 'Пути можно оставить по умолчанию';
+    if (step === 3) {
+      $('foot-hint').textContent = state.mode === 'local'
+        ? 'Пути можно оставить по умолчанию'
+        : 'Сначала проверьте связь с машиной';
+      updateNextState();
+    }
     if (step === 4) $('foot-hint').textContent = 'Проверка ничего не меняет';
     if (step === 5) $('foot-hint').textContent = '';
   }
@@ -190,28 +195,119 @@
     $('form-local').classList.toggle('hidden', !isLocal);
     $('form-remote').classList.toggle('hidden', isLocal);
 
-    $('pane3-lead').textContent = isLocal
-      ? 'Куда поставить агент и как назвать службу.'
-      : 'Установка по сети появится следующим шагом.';
+    // Порт и HTTPS — только для WinRM.
+    var isWinRm = mode === 'winrm';
+    $('rm-port-wrap').classList.toggle('hidden', !isWinRm);
+    $('rm-https-wrap').classList.toggle('hidden', !isWinRm);
 
-    // Кнопка «Далее» недоступна для нереализованных режимов.
+    var hints = {
+      local: 'Куда поставить агент и как назвать службу.',
+      smb: 'Нужны права администратора на целевой машине и доступ к админ-шарам.',
+      winrm: 'Нужна служба WinRM на цели. В рабочей группе — TrustedHosts.',
+      ad: 'Поиск компьютеров в каталоге появится следующим шагом.'
+    };
+    $('pane3-lead').textContent = hints[mode] || '';
+
+    // Подсказка под формой.
+    var hintText = {
+      smb: 'Копирование идёт через <code>\\\\имя\\ADMIN$</code>, служба создаётся ' +
+        'через <code>sc.exe</code> по RPC. WinRM при этом не нужен — поэтому способ ' +
+        'работает и там, где PowerShell Remoting выключен политикой.',
+      winrm: 'Файлы передаются по самому WinRM, доступ к админ-шарам не требуется. ' +
+        'Медленнее SMB, но проходит там, где шары закрыты.'
+    }[mode] || '';
+    $('rm-hint-text').innerHTML = hintText;
+    $('rm-hint').classList.toggle('hidden', !hintText);
+
     var next = $('btn-next');
     if (state.step === 2) {
-      next.disabled = !isLocal;
-      next.title = isLocal ? '' : 'Этот способ ещё в работе';
+      next.disabled = mode === 'ad';
+      next.title = mode === 'ad' ? 'Этот способ ещё в работе' : '';
     }
+  }
+
+  /** Проверка связи с удалённой машиной. */
+  function testRemote() {
+    var btn = $('rm-test');
+    var out = $('rm-test-result');
+    var host = $('rm-host').value.trim();
+    if (!host) {
+      out.textContent = 'укажите компьютер';
+      out.style.color = 'var(--warn)';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Проверяю…';
+    out.textContent = '';
+    out.style.color = '';
+
+    api('/api/remote/test', { method: 'POST', body: {
+      mode: state.mode,
+      host: host,
+      user: $('rm-user').value.trim(),
+      password: $('rm-pass').value,
+      port: parseInt($('rm-port').value, 10) || 5985,
+      https: $('rm-https').checked
+    } }).then(function (r) {
+      out.style.color = r.ok ? 'var(--ok)' : 'var(--fail)';
+      out.textContent = r.ok
+        ? 'связь есть: ' + (r.steps || []).join(', ')
+        : (r.message || 'не удалось');
+      if (r.warnings && r.warnings.length) {
+        out.textContent += ' — ' + r.warnings.join('; ');
+      }
+      state.remoteOk = !!r.ok;
+      updateNextState();
+    }).catch(function (err) {
+      out.style.color = 'var(--fail)';
+      out.textContent = 'Ошибка: ' + err.message;
+      state.remoteOk = false;
+      updateNextState();
+    }).then(function () {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-plug"></i> Проверить связь';
+    });
+  }
+
+  /** Кнопка «Далее» активна, если для сетевого режима связь проверена. */
+  function updateNextState() {
+    if (state.step !== 3) return;
+    var next = $('btn-next');
+    if (state.mode === 'local') {
+      next.disabled = false;
+      next.title = '';
+      return;
+    }
+    next.disabled = !state.remoteOk;
+    next.title = state.remoteOk ? '' : 'Сначала проверьте связь с машиной';
   }
 
   // ---------------------------------------------------------------- шаг 4
 
   function collectRequest() {
+    if (state.mode === 'local') {
+      return {
+        mode: 'local',
+        installDir: $('install-dir').value.trim(),
+        dataDir: $('data-dir').value.trim(),
+        serviceName: $('service-name').value.trim(),
+        port: parseInt($('port').value, 10) || 8080,
+        overwriteConfig: $('overwrite-config').checked
+      };
+    }
+
     return {
-      mode: 'local',
-      installDir: $('install-dir').value.trim(),
-      dataDir: $('data-dir').value.trim(),
-      serviceName: $('service-name').value.trim(),
-      port: parseInt($('port').value, 10) || 8080,
-      overwriteConfig: $('overwrite-config').checked
+      mode: state.mode,
+      host: $('rm-host').value.trim(),
+      user: $('rm-user').value.trim(),
+      password: $('rm-pass').value,
+      port: parseInt($('rm-port').value, 10) || 5985,
+      https: $('rm-https').checked,
+      installDir: $('rm-install-dir').value.trim(),
+      dataDir: $('rm-data-dir').value.trim(),
+      serviceName: $('rm-service').value.trim(),
+      webPort: parseInt($('rm-webport').value, 10) || 8080
     };
   }
 
@@ -220,7 +316,22 @@
     list.innerHTML = '<li class="check-item"><i class="fas fa-spinner fa-spin"></i>' +
       '<div class="check-text">Проверяю условия…</div></li>';
 
-    api('/api/preflight', { method: 'POST', body: collectRequest() })
+    var req = collectRequest();
+
+    // Для сетевых режимов проверяем связь и права на цели.
+    if (req.mode !== 'local') {
+      api('/api/remote/test', { method: 'POST', body: req })
+        .then(function (r) {
+          renderRemotePreflight(r, req);
+        })
+        .catch(function (err) {
+          list.innerHTML = '<li class="check-item fail"><i class="fas fa-circle-exclamation"></i>' +
+            '<div class="check-text">Ошибка проверки: ' + esc(err.message) + '</div></li>';
+        });
+      return;
+    }
+
+    api('/api/preflight', { method: 'POST', body: req })
       .then(function (p) {
         renderPreflight(p);
       })
@@ -228,6 +339,47 @@
         list.innerHTML = '<li class="check-item fail"><i class="fas fa-circle-exclamation"></i>' +
           '<div class="check-text">Ошибка проверки: ' + esc(err.message) + '</div></li>';
       });
+  }
+
+  function renderRemotePreflight(r, req) {
+    var rows = [];
+    var transport = req.mode === 'winrm'
+      ? 'через WinRM (порт ' + req.port + ')'
+      : 'через админ-шару ADMIN$';
+
+    [
+      ['Подключиться к ' + esc(req.host), transport],
+      ['Скопировать файлы', 'во временный каталог на цели'],
+      ['Создать службу', esc(req.serviceName) + ' с автозапуском'],
+      ['Открыть порт', 'firewall и urlacl для ' + req.webPort],
+      ['Запустить и проверить', 'состояние службы на цели']
+    ].forEach(function (row) {
+      rows.push('<li class="check-item"><i class="fas fa-angle-right" style="color:var(--muted)"></i>' +
+        '<div class="check-text">' + row[0] +
+        '<div class="check-detail">' + row[1] + '</div></div></li>');
+    });
+
+    // Результат проверки — сверху.
+    if (r.ok) {
+      rows.unshift('<li class="check-item ok"><i class="fas fa-circle-check"></i>' +
+        '<div class="check-text">Связь есть<div class="check-detail">' +
+        esc((r.steps || []).join(', ')) + '</div></div></li>');
+    } else {
+      rows.unshift('<li class="check-item fail"><i class="fas fa-circle-exclamation"></i>' +
+        '<div class="check-text">' + esc(r.message || 'нет связи') + '</div></li>');
+    }
+
+    $('plan-list').innerHTML = rows.join('');
+
+    var notes = '';
+    (r.warnings || []).forEach(function (t) {
+      notes += '<div class="note warn"><i class="fas fa-exclamation-triangle"></i>' +
+        '<div>' + esc(t) + '</div></div>';
+    });
+    $('preflight-notes').innerHTML = notes;
+
+    $('btn-next').disabled = !r.ok;
+    $('btn-next').title = r.ok ? '' : 'Сначала устраните проблему со связью';
   }
 
   function renderPreflight(p) {
@@ -277,14 +429,21 @@
     state.installing = true;
     go(5);
 
+    var req = collectRequest();
+    var remote = req.mode !== 'local';
+
     $('install-title').textContent = 'Установка';
-    $('install-lead').textContent = 'Не закрывайте окно. Обычно занимает до минуты.';
+    $('install-lead').textContent = remote
+      ? 'Не закрывайте окно. Установка на ' + req.host + ' занимает до нескольких минут.'
+      : 'Не закрывайте окно. Обычно занимает до минуты.';
     $('done-box').classList.add('hidden');
     $('bar').style.width = '0%';
     $('progress-step').textContent = 'Готовлюсь…';
     $('install-log').textContent = '';
 
-    api('/api/install/local', { method: 'POST', body: collectRequest() })
+    var endpoint = remote ? '/api/install/remote' : '/api/install/local';
+
+    api(endpoint, { method: 'POST', body: req })
       .then(function (r) {
         if (!r.ok) {
           appendLog('Ошибка: ' + (r.error || r.message));
@@ -349,9 +508,16 @@
 
     var kv = [];
     var req = collectRequest();
+    var remote = req.mode !== 'local';
+    var webPort = remote ? req.webPort : req.port;
+
+    if (remote) {
+      kv.push(['Компьютер', req.host]);
+      kv.push(['Способ', req.mode === 'winrm' ? 'WinRM' : 'SMB (админ-шара)']);
+    }
     kv.push(['Каталог', req.installDir]);
     kv.push(['Служба', req.serviceName]);
-    kv.push(['Порт', String(req.port)]);
+    kv.push(['Порт', String(webPort)]);
     if (result.warnings && result.warnings.length) {
       kv.push(['Замечания', result.warnings.join('; ')]);
     }
@@ -370,13 +536,14 @@
       back.disabled = true;
     };
 
-    // Ссылка на веб-интерфейс.
+    // Ссылка на веб-интерфейс: для удалённой установки — адрес цели.
+    var hostForUrl = remote ? req.host : 'localhost';
     var link = document.createElement('div');
     link.className = 'note ok';
     link.style.marginTop = '14px';
     link.innerHTML = '<i class="fas fa-circle-check"></i><div>' +
-      'Открыть веб-интерфейс: <a href="http://localhost:' + req.port +
-      '/" target="_blank">http://localhost:' + req.port + '/</a></div>';
+      'Открыть веб-интерфейс: <a href="http://' + esc(hostForUrl) + ':' + webPort +
+      '/" target="_blank">http://' + esc(hostForUrl) + ':' + webPort + '/</a></div>';
     $('done-box').appendChild(link);
   }
 
@@ -403,6 +570,21 @@
         selectMode(this.getAttribute('data-mode'));
       });
     }
+
+    $('rm-test').addEventListener('click', testRemote);
+
+    // Правка полей удалённой установки сбрасывает проверку: связь могла
+    // измениться, и «Далее» должна снова требовать теста.
+    ['rm-host', 'rm-user', 'rm-pass', 'rm-port'].forEach(function (id) {
+      var el = $(id);
+      if (el) {
+        el.addEventListener('input', function () {
+          state.remoteOk = false;
+          $('rm-test-result').textContent = '';
+          updateNextState();
+        });
+      }
+    });
   }
 
   // ---------------------------------------------------------------- старт

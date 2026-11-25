@@ -87,7 +87,7 @@
           Копирование через админ-шару <code>ADMIN$</code> и запуск службы
           удалённо. Работает там, где WinRM отключён политикой.
         </div>
-        <span class="mode-tag soon">следующий шаг</span>
+        <span class="mode-tag">работает сейчас</span>
       </label>
 
       <label class="mode" data-mode="winrm">
@@ -97,7 +97,7 @@
           Штатный путь Windows: PowerShell Remoting. В рабочей группе нужен
           TrustedHosts, в домене — права администратора на цели.
         </div>
-        <span class="mode-tag soon">следующий шаг</span>
+        <span class="mode-tag">работает сейчас</span>
       </label>
 
       <label class="mode" data-mode="ad">
@@ -165,10 +165,76 @@
 
     <!-- заглушка для сетевых режимов -->
     <div id="form-remote" class="hidden">
-      <div class="note warn">
-        <i class="fas fa-triangle-exclamation"></i>
-        <div>Установка по сети появится следующим шагом. Сейчас работает
-        установка на эту машину — она же нужна как основа для остальных.</div>
+      <div class="card">
+        <div class="card-head"><i class="fas fa-network-wired"></i> Целевая машина</div>
+        <div class="card-body">
+          <div class="grid2">
+            <label class="fld">
+              <span>Компьютер</span>
+              <input type="text" id="rm-host" placeholder="имя или IP" spellcheck="false">
+              <small>Имя из DNS или адрес</small>
+            </label>
+            <label class="fld" id="rm-port-wrap">
+              <span>Порт WinRM</span>
+              <input type="number" id="rm-port" value="5985" min="1" max="65535">
+              <small>5985 — HTTP, 5986 — HTTPS</small>
+            </label>
+          </div>
+
+          <div class="grid2">
+            <label class="fld">
+              <span>Пользователь</span>
+              <input type="text" id="rm-user" placeholder="DOMAIN\admin или .\admin" spellcheck="false">
+              <small>Нужны права администратора на цели</small>
+            </label>
+            <label class="fld">
+              <span>Пароль</span>
+              <input type="password" id="rm-pass" placeholder="пароль">
+              <small>Не сохраняется: живёт только до конца установки</small>
+            </label>
+          </div>
+
+          <label class="chk hidden" id="rm-https-wrap">
+            <input type="checkbox" id="rm-https">
+            Использовать HTTPS (порт 5986)
+          </label>
+
+          <div style="display:flex;gap:10px;align-items:center;margin-top:6px">
+            <button class="btn" id="rm-test"><i class="fas fa-plug"></i> Проверить связь</button>
+            <span class="muted" style="font-size:11.5px" id="rm-test-result"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><i class="fas fa-folder"></i> Куда ставить на цели</div>
+        <div class="card-body">
+          <div class="grid2">
+            <label class="fld">
+              <span>Каталог программы</span>
+              <input type="text" id="rm-install-dir" value="C:\DPT.Backup" spellcheck="false">
+            </label>
+            <label class="fld">
+              <span>Каталог данных</span>
+              <input type="text" id="rm-data-dir" value="C:\ProgramData\DPT.Backup" spellcheck="false">
+            </label>
+          </div>
+          <div class="grid2">
+            <label class="fld">
+              <span>Имя службы</span>
+              <input type="text" id="rm-service" value="DPTBackupService" spellcheck="false">
+            </label>
+            <label class="fld">
+              <span>Порт веб-интерфейса</span>
+              <input type="number" id="rm-webport" value="8080" min="1" max="65535">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="note warn" id="rm-hint">
+        <i class="fas fa-circle-info"></i>
+        <div id="rm-hint-text"></div>
       </div>
     </div>
   </section>

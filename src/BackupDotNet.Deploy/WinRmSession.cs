@@ -26,6 +26,13 @@ public class WinRmSession : IDisposable
 	public static WinRmSession Open(string host, int port, bool https, string user, string password, int timeoutMs, out string error)
 	{
 		error = "";
+
+		// Пустой пользователь — текущая учётная запись: вариантов имени нет.
+		if (string.IsNullOrEmpty(user))
+		{
+			return TryOpen(host, port, https, "", password, timeoutMs, out error);
+		}
+
 		List<string> variants = new List<string>();
 		if (user != null && (user.IndexOf('\\') >= 0 || user.IndexOf('@') >= 0))
 		{
@@ -62,20 +69,35 @@ public class WinRmSession : IDisposable
 		WinRmSession s = new WinRmSession(host);
 		try
 		{
-			SecureString sec = new SecureString();
-			string text = password ?? "";
-			foreach (char c in text)
-			{
-				sec.AppendChar(c);
-			}
-			sec.MakeReadOnly();
-			PSCredential cred = new PSCredential(user ?? "", sec);
 			if (port <= 0)
 			{
 				port = (https ? 5986 : 5985);
 			}
 			string scheme = (https ? "https" : "http");
-			WSManConnectionInfo ci = new WSManConnectionInfo(new Uri(scheme + "://" + host + ":" + port + "/wsman"), "http://schemas.microsoft.com/powershell/Microsoft.PowerShell", cred);
+			Uri uri = new Uri(scheme + "://" + host + ":" + port + "/wsman");
+			string shellUri = "http://schemas.microsoft.com/powershell/Microsoft.PowerShell";
+
+			WSManConnectionInfo ci;
+			if (string.IsNullOrEmpty(user))
+			{
+				// Пустой пользователь — работаем под текущей учётной записью.
+				// Так установщик может подключиться к машине, где уже есть
+				// доверие (домен или TrustedHosts), не требуя пароля.
+				ci = new WSManConnectionInfo(uri, shellUri, (PSCredential)null);
+			}
+			else
+			{
+				SecureString sec = new SecureString();
+				string text = password ?? "";
+				foreach (char c in text)
+				{
+					sec.AppendChar(c);
+				}
+				sec.MakeReadOnly();
+				PSCredential cred = new PSCredential(user, sec);
+				ci = new WSManConnectionInfo(uri, shellUri, cred);
+			}
+
 			ci.AuthenticationMechanism = AuthenticationMechanism.Negotiate;
 			ci.OperationTimeout = timeoutMs;
 			ci.OpenTimeout = timeoutMs;
