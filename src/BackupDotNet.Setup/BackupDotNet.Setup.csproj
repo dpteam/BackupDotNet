@@ -9,6 +9,13 @@
     <!-- Окно установщика — всегда 64-битное: WebView2Loader берётся x64. -->
     <PlatformTarget>x64</PlatformTarget>
     <Platforms>x64</Platforms>
+    <!--
+      Один каталог вывода независимо от платформы. Иначе решение пишет в
+      bin\x64\Release, а tools\build-setup.ps1 читает bin\Release — и можно
+      упаковать установщик прошлой версии, не заметив.
+    -->
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 

@@ -31,6 +31,27 @@ if ($LASTEXITCODE -ne 0) {
     throw 'сборка установщика не удалась'
 }
 
+# Версия установщика должна совпадать с версией продукта из
+# Directory.Build.props. Та же ловушка, что была с агентом: собрали решение,
+# а упаковали exe прошлой версии — и в релиз уезжает старое число.
+$setupExe = Join-Path $setupBin 'BackupDotNet.Setup.exe'
+if (-not (Test-Path $setupExe)) {
+    throw "нет собранного установщика: $setupExe"
+}
+$propsPath = Join-Path $root 'Directory.Build.props'
+# PropertyGroup в файле несколько, поэтому берём первое непустое значение,
+# а не свойство всего массива групп.
+$wantVer = @(([xml](Get-Content $propsPath -Raw)).Project.PropertyGroup.VersionPrefix |
+    Where-Object { $_ }) | Select-Object -First 1
+if ($wantVer) {
+    $haveVer = (Get-Item $setupExe).VersionInfo.FileVersion
+    if ($haveVer -and $haveVer -notlike "$wantVer*") {
+        throw ("установщик собран другой версией: exe={0}, ожидается {1}. " +
+            "Удалите src\BackupDotNet.Setup\bin и пересоберите.") -f $haveVer, $wantVer
+    }
+    Write-Host "  установщик: версия $haveVer"
+}
+
 # Агент должен быть уже собран в bin (build.cmd).
 $agentExe = Join-Path $agentBin 'BackupDotNet.exe'
 if (-not (Test-Path $agentExe)) {
