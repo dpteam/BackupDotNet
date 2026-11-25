@@ -19,6 +19,9 @@ public sealed class InstallRunner
 
 	private readonly StringBuilder _log = new StringBuilder();
 
+	/// <summary>Итоги по компьютерам при пакетной установке.</summary>
+	private readonly List<Dictionary<string, object>> _batch = new List<Dictionary<string, object>>();
+
 	private string _step = "";
 
 	private int _percent;
@@ -212,6 +215,116 @@ public sealed class InstallRunner
 		return true;
 	}
 
+	/// <summary>
+	/// Пакетная установка на компьютеры домена. Режим — <c>smb</c> или
+	/// <c>winrm</c>, список — в <c>hosts</c>.
+	/// </summary>
+	public bool StartBatch(Dictionary<string, object> d)
+	{
+		lock (_sync)
+		{
+			if (!_done && _step.Length > 0)
+			{
+				return false;
+			}
+			_step = "Подготовка";
+			_percent = 0;
+			_done = false;
+			_ok = false;
+			_result = null;
+			_log.Clear();
+			_batch.Clear();
+		}
+
+		List<string> hosts = new List<string>();
+		foreach (object o in Json.AsArray(Json.Get(d, "hosts")))
+		{
+			string h = Json.Str(o, "").Trim();
+			if (h.Length > 0)
+			{
+				hosts.Add(h);
+			}
+		}
+
+		Thread t = new Thread(delegate ()
+		{
+			try
+			{
+				SetupEngine.ProgressHandler progress = delegate (string step, int percent)
+				{
+					lock (_sync)
+					{
+						_step = step;
+						_percent = percent;
+						_log.AppendLine("[" + percent.ToString().PadLeft(3) + "%] " + step);
+					}
+				};
+
+				List<AdInstaller.HostResult> results = AdInstaller.InstallBatch(
+					hosts,
+					Json.GetStr(d, "mode", "smb"),
+					Json.GetStr(d, "user", "").Trim(),
+					Json.GetStr(d, "password", ""),
+					Json.Int(Json.Get(d, "winrmPort"), 5985),
+					Json.GetStr(d, "installDir", @"C:\DPT.Backup"),
+					Json.GetStr(d, "dataDir", @"C:\ProgramData\DPT.Backup"),
+					Json.GetStr(d, "serviceName", "DPTBackupService"),
+					Json.Int(Json.Get(d, "webPort"), 8080),
+					progress);
+
+				int ok = 0;
+				List<string> failed = new List<string>();
+				lock (_sync)
+				{
+					foreach (AdInstaller.HostResult hr in results)
+					{
+						_batch.Add(hr.ToJson());
+						if (hr.Ok)
+						{
+							ok++;
+						}
+						else
+						{
+							failed.Add(hr.Host + " — " + hr.Message);
+						}
+					}
+				}
+
+				lock (_sync)
+				{
+					_done = true;
+					_ok = failed.Count == 0;
+					_result = new SetupEngine.Result
+					{
+						Ok = _ok,
+						Message = "установлено на " + ok + " из " + results.Count +
+							(failed.Count > 0 ? ". Не удалось: " + string.Join("; ", failed.ToArray()) : ""),
+						Steps = new List<string>()
+					};
+					_step = _ok ? "Готово" : "Завершено с ошибками";
+					_percent = 100;
+					_log.AppendLine(_result.Message);
+				}
+			}
+			catch (Exception ex)
+			{
+				lock (_sync)
+				{
+					_done = true;
+					_ok = false;
+					_result = new SetupEngine.Result { Message = ex.Message };
+					_step = "Ошибка";
+					_percent = 100;
+					_log.AppendLine("Исключение: " + ex.Message);
+				}
+			}
+		});
+		t.IsBackground = true;
+		t.Name = "setup-install-batch";
+		t.Start();
+		return true;
+	}
+
 	/// <summary>Состояние для страницы.</summary>
 	public Dictionary<string, object> Snapshot()
 	{
@@ -223,6 +336,10 @@ public sealed class InstallRunner
 			d["done"] = _done;
 			d["ok"] = _ok;
 			d["log"] = _log.ToString().TrimEnd();
+			if (_batch.Count > 0)
+			{
+				d["batch"] = new List<Dictionary<string, object>>(_batch);
+			}
 			if (_result != null)
 			{
 				d["result"] = _result.ToJson();

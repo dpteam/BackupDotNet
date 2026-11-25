@@ -215,6 +215,52 @@ internal static class Program
 				}
 			},
 
+			// Поиск компьютеров в каталоге домена.
+			{ "/api/ad/search", delegate (string body)
+				{
+					Dictionary<string, object> d = ParseJson(body);
+					AdInstaller.SearchResult r = AdInstaller.Search(
+						Json.GetStr(d, "domain", "").Trim(),
+						Json.GetStr(d, "user", "").Trim(),
+						Json.GetStr(d, "password", ""),
+						Json.GetStr(d, "filter", ""),
+						Json.Int(Json.Get(d, "limit"), 500));
+					return Json.Write(r.ToJson());
+				}
+			},
+
+			// Пакетная установка на выбранные компьютеры.
+			{ "/api/ad/install", delegate (string body)
+				{
+					Dictionary<string, object> d = ParseJson(body);
+					bool started = runner.StartBatch(d);
+					Dictionary<string, object> res = Json.Obj();
+					res["ok"] = true;
+					res["started"] = started;
+					if (!started)
+					{
+						res["note"] = "установка уже идёт";
+					}
+					return Json.Write(res);
+				}
+			},
+
+			// Скрипт для групповой политики.
+			{ "/api/ad/gpo", delegate (string body)
+				{
+					Dictionary<string, object> d = ParseJson(body);
+					string script = AdInstaller.BuildGpoScript(
+						Json.GetStr(d, "sharePath", ""),
+						Json.GetStr(d, "serviceName", "DPTBackupService"),
+						Json.Int(Json.Get(d, "port"), 8080));
+
+					Dictionary<string, object> res = Json.Obj();
+					res["ok"] = true;
+					res["script"] = script;
+					return Json.Write(res);
+				}
+			},
+
 			// Запуск установки: отвечает сразу, дальше страница опрашивает прогресс.
 			{ "/api/install/local", delegate (string body)
 				{

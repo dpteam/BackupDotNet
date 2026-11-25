@@ -86,12 +86,7 @@
 
     if (step === 1) $('foot-hint').textContent = '';
     if (step === 2) $('foot-hint').textContent = 'Способ можно поменять до установки';
-    if (step === 3) {
-      $('foot-hint').textContent = state.mode === 'local'
-        ? 'Пути можно оставить по умолчанию'
-        : 'Сначала проверьте связь с машиной';
-      updateNextState();
-    }
+    if (step === 3) updateNextState();
     if (step === 4) $('foot-hint').textContent = 'Проверка ничего не меняет';
     if (step === 5) $('foot-hint').textContent = '';
   }
@@ -192,8 +187,10 @@
     }
 
     var isLocal = mode === 'local';
+    var isAd = mode === 'ad';
     $('form-local').classList.toggle('hidden', !isLocal);
-    $('form-remote').classList.toggle('hidden', isLocal);
+    $('form-remote').classList.toggle('hidden', isLocal || isAd);
+    $('form-ad').classList.toggle('hidden', !isAd);
 
     // Порт и HTTPS — только для WinRM.
     var isWinRm = mode === 'winrm';
@@ -204,7 +201,7 @@
       local: 'Куда поставить агент и как назвать службу.',
       smb: 'Нужны права администратора на целевой машине и доступ к админ-шарам.',
       winrm: 'Нужна служба WinRM на цели. В рабочей группе — TrustedHosts.',
-      ad: 'Поиск компьютеров в каталоге появится следующим шагом.'
+      ad: 'Найдите компьютеры в каталоге и отметьте нужные.'
     };
     $('pane3-lead').textContent = hints[mode] || '';
 
@@ -221,8 +218,11 @@
 
     var next = $('btn-next');
     if (state.step === 2) {
-      next.disabled = mode === 'ad';
-      next.title = mode === 'ad' ? 'Этот способ ещё в работе' : '';
+      next.disabled = false;
+      next.title = '';
+    }
+    if (state.step === 3) {
+      updateNextState();
     }
   }
 
@@ -451,13 +451,145 @@
   function updateNextState() {
     if (state.step !== 3) return;
     var next = $('btn-next');
+    var hint = $('foot-hint');
+
     if (state.mode === 'local') {
       next.disabled = false;
       next.title = '';
+      hint.textContent = 'Пути можно оставить по умолчанию';
       return;
     }
+
+    if (state.mode === 'ad') {
+      var count = adSelected().length;
+      next.disabled = count === 0;
+      next.title = count === 0 ? 'Отметьте хотя бы один компьютер' : '';
+      hint.textContent = count === 0
+        ? 'Отметьте компьютеры, на которые ставить агент'
+        : 'Установка пойдёт по очереди: ' + count + ' шт.';
+      return;
+    }
+
     next.disabled = !state.remoteOk;
     next.title = state.remoteOk ? '' : 'Сначала проверьте связь с машиной';
+    hint.textContent = state.remoteOk
+      ? 'Связь есть — можно продолжать'
+      : 'Сначала проверьте связь с машиной';
+  }
+
+  // ---------------------------------------------------------------- домен
+
+  /** Выбранные компьютеры домена. */
+  function adSelected() {
+    var out = [];
+    var items = document.querySelectorAll('[data-ad-host]');
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].checked) {
+        out.push(items[i].getAttribute('data-ad-host'));
+      }
+    }
+    return out;
+  }
+
+  /** Ищет компьютеры в каталоге. */
+  function adSearch() {
+    var btn = $('ad-search');
+    var status = $('ad-status');
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Ищу…';
+    status.textContent = '';
+    status.style.color = '';
+
+    api('/api/ad/search', { method: 'POST', body: {
+      domain: $('ad-domain').value.trim(),
+      user: $('ad-user').value.trim(),
+      password: $('ad-pass').value,
+      filter: $('ad-filter').value.trim(),
+      limit: 500
+    } }).then(function (r) {
+      state.adComputers = r.computers || [];
+      renderAdList();
+
+      status.style.color = r.ok ? 'var(--ok)' : 'var(--fail)';
+      status.textContent = r.ok
+        ? (r.message || 'найдено: ' + state.adComputers.length)
+        : (r.message || 'не удалось');
+      updateNextState();
+    }).catch(function (err) {
+      status.style.color = 'var(--fail)';
+      status.textContent = 'Ошибка: ' + err.message;
+    }).then(function () {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-search"></i> Найти компьютеры';
+    });
+  }
+
+  function renderAdList() {
+    var card = $('ad-list-card');
+    var box = $('ad-items');
+    var list = state.adComputers || [];
+
+    if (!list.length) {
+      card.classList.add('hidden');
+      return;
+    }
+
+    box.innerHTML = list.map(function (c) {
+      return '<label class="ad-item" data-ad-row="' + esc(c.name) + '">' +
+        '<input type="checkbox" data-ad-host="' + esc(c.name) + '">' +
+        '<span class="ad-name">' + esc(c.name) + '</span>' +
+        '<span class="ad-os">' + esc(c.os || '—') + '</span>' +
+        '</label>';
+    }).join('');
+
+    card.classList.remove('hidden');
+
+    box.querySelectorAll('[data-ad-host]').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var row = this.closest('.ad-item');
+        if (row) row.classList.toggle('sel', this.checked);
+        updateAdCount();
+        updateNextState();
+      });
+    });
+
+    updateAdCount();
+  }
+
+  function updateAdCount() {
+    var n = adSelected().length;
+    $('ad-selected').textContent = 'выбрано: ' + n;
+
+    var all = document.querySelectorAll('[data-ad-host]');
+    var box = $('ad-all');
+    if (box) {
+      box.checked = all.length > 0 && n === all.length;
+    }
+  }
+
+  /** Скрипт для групповой политики. */
+  function buildGpo() {
+    var btn = $('ad-gpo');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Собираю…';
+
+    api('/api/ad/gpo', { method: 'POST', body: {
+      sharePath: $('ad-share').value.trim(),
+      serviceName: $('ad-service').value.trim(),
+      port: parseInt($('ad-webport').value, 10) || 8080
+    } }).then(function (r) {
+      var pre = $('ad-gpo-text');
+      pre.textContent = r.script || '';
+      pre.classList.remove('hidden');
+    }).catch(function (err) {
+      var pre = $('ad-gpo-text');
+      pre.textContent = 'Ошибка: ' + err.message;
+      pre.classList.remove('hidden');
+    }).then(function () {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-download"></i> Собрать скрипт GPO';
+    });
   }
 
   // ---------------------------------------------------------------- шаг 4
@@ -471,6 +603,20 @@
         serviceName: $('service-name').value.trim(),
         port: parseInt($('port').value, 10) || 8080,
         overwriteConfig: $('overwrite-config').checked
+      };
+    }
+
+    if (state.mode === 'ad') {
+      return {
+        mode: $('ad-mode').value,
+        hosts: adSelected(),
+        user: $('ad-user').value.trim(),
+        password: $('ad-pass').value,
+        winrmPort: 5985,
+        installDir: $('ad-install-dir').value.trim(),
+        dataDir: $('ad-data-dir').value.trim(),
+        serviceName: $('ad-service').value.trim(),
+        webPort: parseInt($('ad-webport').value, 10) || 8080
       };
     }
 
@@ -494,6 +640,38 @@
       '<div class="check-text">Проверяю условия…</div></li>';
 
     var req = collectRequest();
+    var isAd = state.mode === 'ad';
+
+    // Для домена показываем план по каждому компьютеру: их может быть много,
+    // и человек должен видеть, на что подписывается.
+    if (isAd) {
+      var hosts = req.hosts || [];
+      var transport = req.mode === 'winrm' ? 'WinRM' : 'SMB';
+      var rows = [];
+      hosts.slice(0, 40).forEach(function (h) {
+        rows.push('<li class="check-item"><i class="fas fa-angle-right" style="color:var(--muted)"></i>' +
+          '<div class="check-text">' + esc(h) +
+          '<div class="check-detail">' + transport +
+          ', каталог ' + esc(req.installDir) + '</div></div></li>');
+      });
+      if (hosts.length > 40) {
+        rows.push('<li class="check-item"><i class="fas fa-ellipsis-h" style="color:var(--muted)"></i>' +
+          '<div class="check-text">и ещё ' + (hosts.length - 40) + ' компьютеров</div></li>');
+      }
+
+      list.innerHTML = rows.join('') || '<li class="check-item fail">' +
+        '<i class="fas fa-exclamation-circle"></i>' +
+        '<div class="check-text">Компьютеры не выбраны</div></li>';
+
+      $('preflight-notes').innerHTML =
+        '<div class="note warn"><i class="fas fa-info-circle"></i><div>' +
+        'Установка пойдёт по очереди. Если какой-то компьютер недоступен, остальные ' +
+        'всё равно будут обработаны — итог покажем по каждому.</div></div>';
+
+      $('btn-next').disabled = hosts.length === 0;
+      $('btn-next').title = hosts.length === 0 ? 'Отметьте компьютеры' : '';
+      return;
+    }
 
     // Для сетевых режимов проверяем связь и права на цели.
     if (req.mode !== 'local') {
@@ -604,21 +782,36 @@
 
   function startInstall() {
     state.installing = true;
+    state.lastBatch = null;
     go(5);
 
     var req = collectRequest();
     var remote = req.mode !== 'local';
+    var isAd = state.mode === 'ad';
 
     $('install-title').textContent = 'Установка';
-    $('install-lead').textContent = remote
-      ? 'Не закрывайте окно. Установка на ' + req.host + ' занимает до нескольких минут.'
-      : 'Не закрывайте окно. Обычно занимает до минуты.';
+    $('install-lead').textContent = isAd
+      ? 'Установка на ' + req.hosts.length + ' компьютеров. Не закрывайте окно.'
+      : (remote
+        ? 'Не закрывайте окно. Установка на ' + req.host + ' занимает до нескольких минут.'
+        : 'Не закрывайте окно. Обычно занимает до минуты.');
     $('done-box').classList.add('hidden');
     $('bar').style.width = '0%';
     $('progress-step').textContent = 'Готовлюсь…';
     $('install-log').textContent = '';
 
-    var endpoint = remote ? '/api/install/remote' : '/api/install/local';
+    // Прошлый результат (таблица по компьютерам, ссылка) не должен
+    // оставаться в новой попытке. Статичную карточку внутри done-box
+    // не трогаем — она нужна всегда.
+    Array.prototype.slice.call($('done-box').querySelectorAll('#batch-table, .note.ok'))
+      .forEach(function (el) {
+        el.parentNode.removeChild(el);
+      });
+    $('done-box').querySelector('.done-hero').classList.remove('partial', 'failed');
+
+    var endpoint = isAd
+      ? '/api/ad/install'
+      : (remote ? '/api/install/remote' : '/api/install/local');
 
     api(endpoint, { method: 'POST', body: req })
       .then(function (r) {
@@ -642,6 +835,11 @@
       if (typeof p.percent === 'number') $('bar').style.width = Math.max(0, Math.min(100, p.percent)) + '%';
       if (p.log) $('install-log').textContent = p.log;
 
+      // Для домена сохраняем итоги по компьютерам: покажем после завершения.
+      if (p.batch && p.batch.length) {
+        state.lastBatch = p.batch;
+      }
+
       if (p.done) {
         finish(p.ok, p.result || {});
         return;
@@ -662,10 +860,39 @@
     $('bar').style.width = '100%';
     $('progress-step').textContent = ok ? 'Готово' : 'Установка не завершена';
 
+    var isAd = state.mode === 'ad';
+    var hasBatch = isAd && state.lastBatch && state.lastBatch.length > 0;
+
     if (!ok) {
-      $('install-title').textContent = 'Установка не завершена';
-      $('install-lead').textContent = 'Ниже — что именно не получилось.';
-      $('done-box').classList.add('hidden');
+      $('install-title').textContent = hasBatch
+        ? 'Установка завершена с ошибками'
+        : 'Установка не завершена';
+      $('install-lead').textContent = hasBatch
+        ? 'Часть компьютеров обработана — итог по каждому ниже.'
+        : 'Ниже — что именно не получилось.';
+
+      // В домене итог по компьютерам нужен и при ошибках: иначе непонятно,
+      // где именно не вышло и на скольких машинах агент всё-таки встал.
+      if (hasBatch) {
+        var okCount = state.lastBatch.filter(function (b) { return b.ok; }).length;
+        var allOk = okCount === state.lastBatch.length;
+        var hero = $('done-box').querySelector('.done-hero');
+        hero.classList.toggle('partial', okCount > 0 && !allOk);
+        hero.classList.toggle('failed', okCount === 0);
+
+        $('done-title').textContent = 'Установлено на ' + okCount + ' из ' + state.lastBatch.length;
+        $('done-sub').textContent = allOk
+          ? 'Все компьютеры обработаны без ошибок.'
+          : 'Где не вышло — в таблице ниже.';
+        $('done-icon').innerHTML = allOk
+          ? '<i class="fas fa-check-circle"></i>'
+          : '<i class="fas fa-exclamation-circle"></i>';
+        renderBatchTable();
+        $('done-box').classList.remove('hidden');
+      } else {
+        $('done-box').classList.add('hidden');
+      }
+
       var back = $('btn-back');
       back.classList.remove('hidden');
       back.textContent = 'Вернуться к параметрам';
@@ -681,14 +908,20 @@
     $('install-title').textContent = 'Установка завершена';
     $('install-lead').textContent = '';
     $('done-box').classList.remove('hidden');
+    $('done-icon').innerHTML = '<i class="fas fa-check-circle"></i>';
+    $('done-box').querySelector('.done-hero').classList.remove('partial', 'failed');
+    $('done-title').textContent = 'Агент установлен';
     $('done-sub').textContent = result.message || '';
 
     var kv = [];
     var req = collectRequest();
     var remote = req.mode !== 'local';
-    var webPort = remote ? req.webPort : req.port;
+    var webPort = isAd ? req.webPort : (remote ? req.webPort : req.port);
 
-    if (remote) {
+    if (isAd) {
+      kv.push(['Компьютеров', String((req.hosts || []).length)]);
+      kv.push(['Способ', req.mode === 'winrm' ? 'WinRM' : 'SMB (админ-шара)']);
+    } else if (remote) {
       kv.push(['Компьютер', req.host]);
       kv.push(['Способ', req.mode === 'winrm' ? 'WinRM' : 'SMB (админ-шара)']);
     }
@@ -702,6 +935,11 @@
       return '<div class="k">' + esc(r[0]) + '</div><div class="v">' + esc(r[1]) + '</div>';
     }).join('');
 
+    // Для домена — таблица по компьютерам: видно, где именно не вышло.
+    if (hasBatch) {
+      renderBatchTable();
+    }
+
     var back = $('btn-back');
     back.classList.remove('hidden');
     back.textContent = 'Закрыть мастер';
@@ -713,15 +951,41 @@
       back.disabled = true;
     };
 
-    // Ссылка на веб-интерфейс: для удалённой установки — адрес цели.
-    var hostForUrl = remote ? req.host : 'localhost';
-    var link = document.createElement('div');
-    link.className = 'note ok';
-    link.style.marginTop = '14px';
-    link.innerHTML = '<i class="fas fa-check-circle"></i><div>' +
-      'Открыть веб-интерфейс: <a href="http://' + esc(hostForUrl) + ':' + webPort +
-      '/" target="_blank">http://' + esc(hostForUrl) + ':' + webPort + '/</a></div>';
-    $('done-box').appendChild(link);
+    // Ссылка на веб-интерфейс: для одиночной удалённой установки — адрес цели.
+    if (!isAd) {
+      var hostForUrl = remote ? req.host : 'localhost';
+      var link = document.createElement('div');
+      link.className = 'note ok';
+      link.style.marginTop = '14px';
+      link.innerHTML = '<i class="fas fa-check-circle"></i><div>' +
+        'Открыть веб-интерфейс: <a href="http://' + esc(hostForUrl) + ':' + webPort +
+        '/" target="_blank">http://' + esc(hostForUrl) + ':' + webPort + '/</a></div>';
+      $('done-box').appendChild(link);
+    }
+  }
+
+  /** Таблица итогов по компьютерам при установке в домене. */
+  function renderBatchTable() {
+    var old = document.getElementById('batch-table');
+    if (old) old.parentNode.removeChild(old);
+
+    var rows = (state.lastBatch || []).map(function (b) {
+      return '<tr><td><strong>' + esc(b.host) + '</strong></td>' +
+        '<td>' + (b.ok
+          ? '<span class="badge s-OK">установлено</span>'
+          : '<span class="badge s-FAIL">ошибка</span>') + '</td>' +
+        '<td class="muted" style="font-size:11.5px">' + esc(b.message || '') + '</td></tr>';
+    }).join('');
+
+    var table = document.createElement('div');
+    table.className = 'card';
+    table.id = 'batch-table';
+    table.style.marginTop = '14px';
+    table.innerHTML = '<div class="card-head"><i class="fas fa-list"></i> Итог по компьютерам</div>' +
+      '<div class="card-body" style="padding:0">' +
+      '<table class="cfg-table"><thead><tr><th>Компьютер</th><th>Результат</th><th>Сообщение</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>';
+    $('done-box').appendChild(table);
   }
 
   // ---------------------------------------------------------------- события
@@ -754,6 +1018,26 @@
     $('rm-fix-save').addEventListener('click', saveFixScript);
     $('rm-rdp').addEventListener('click', openRdp);
     $('rm-fix-format').addEventListener('change', loadFixScript);
+
+    // Домен.
+    $('ad-search').addEventListener('click', adSearch);
+    $('ad-gpo').addEventListener('click', buildGpo);
+    $('ad-filter').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        adSearch();
+      }
+    });
+    $('ad-all').addEventListener('change', function () {
+      var on = this.checked;
+      document.querySelectorAll('[data-ad-host]').forEach(function (cb) {
+        cb.checked = on;
+        var row = cb.closest('.ad-item');
+        if (row) row.classList.toggle('sel', on);
+      });
+      updateAdCount();
+      updateNextState();
+    });
 
     // Правка полей удалённой установки сбрасывает проверку: связь могла
     // измениться, и «Далее» должна снова требовать теста.

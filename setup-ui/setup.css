@@ -512,8 +512,43 @@ footer .hint {
 
 .hidden { display: none !important; }
 
-/* Скрипт исправления: моноширинный, с прокруткой и переносами не по буквам. */
-.fix-script {
+/* Список компьютеров домена: прокрутка и плотные строки. */
+.ad-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.ad-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ad-item:last-child { border-bottom: 0; }
+
+.ad-item:hover { background: var(--surface-alt); }
+
+.ad-item.sel { background: var(--brand-soft); }
+
+.ad-item input { margin: 0; flex: 0 0 auto; }
+
+.ad-name {
+  font-weight: 600;
+  min-width: 180px;
+}
+
+.ad-os {
+  color: var(--muted);
+  font-size: 11px;
+  margin-left: auto;
+  text-align: right;
+}
+
+/* Скрипт исправления: моноширинный, с прокруткой и переносами не по буквам. */.fix-script {
   margin: 0;
   max-height: 320px;
   overflow: auto;
@@ -553,6 +588,12 @@ a:hover { text-decoration: underline; }
   color: var(--ok);
   margin-bottom: 10px;
 }
+
+/* Частичный успех в домене: не всё получилось — цвет предупреждения. */
+.done-hero.partial .ico { color: var(--warn); }
+
+/* Полный отказ: агент нигде не встал. */
+.done-hero.failed .ico { color: var(--fail); }
 
 .done-hero h2 {
   margin: 0 0 6px;
