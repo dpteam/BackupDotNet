@@ -48,7 +48,8 @@
   "logging": {
     "level": "info",
     "maxFileSizeMb": 32,
-    "keepDays": 90
+    "keepDays": 90,
+    "publicEnabled": true
   },
   "history": {
     "journalKeepDays": 400,

@@ -86,6 +86,13 @@ public class Settings
 
 	public int LogKeepDays = 90;
 
+	/// <summary>
+	/// Вести второй, «публичный» журнал: тот же поток, но с вычищенными
+	/// секретами, адресами и путями. Его можно отдать вендору или приложить
+	/// к тикету, не вычитывая построчно.
+	/// </summary>
+	public bool LogPublicEnabled = true;
+
 	// ------------------------------------------------------------------ хранение истории
 
 	/// <summary>Сколько дней хранить подробный журнал прогонов (файлы journal/yyyy-MM.ndjson).</summary>
@@ -253,6 +260,7 @@ public class Settings
 		s.LogLevel = Json.GetStr(lg, "level", s.LogLevel);
 		s.LogMaxMb = Json.Int(Json.Get(lg, "maxFileSizeMb"), s.LogMaxMb);
 		s.LogKeepDays = Json.Int(Json.Get(lg, "keepDays"), s.LogKeepDays);
+		s.LogPublicEnabled = Json.Bool(Json.Get(lg, "publicEnabled"), s.LogPublicEnabled);
 
 		Dictionary<string, object> hist = Json.AsObject(Json.Get(root, "history"));
 		s.HistoryJournalKeepDays = Json.Int(Json.Get(hist, "journalKeepDays"), s.HistoryJournalKeepDays);

@@ -50,6 +50,14 @@ public static class LogPack
 			}
 			foreach (FileInfo f in Log.ListFiles(logDir))
 			{
+				// Публичный журнал — это уже вычищенная копия основного.
+				// Класть в архив обе версии незачем: получится дубль
+				// с разной степенью обезличивания, и читать его будет труднее.
+				if (Log.IsPublicName(f.Name))
+				{
+					skipped.Add(Json.Obj("file", f.Name, "reason", "публичная копия — в архиве есть исходный журнал"));
+					continue;
+				}
 				if (included.Count >= MaxLogFiles)
 				{
 					skipped.Add(Json.Obj("file", f.Name, "reason", "сверх лимита " + MaxLogFiles));

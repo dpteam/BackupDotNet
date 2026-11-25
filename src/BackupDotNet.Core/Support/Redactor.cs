@@ -37,6 +37,14 @@ public class Redactor
 	private readonly List<string> _known = new List<string>();
 
 	/// <summary>
+	/// Готовые выражения для известных значений. Собирать Regex на каждую
+	/// строку журнала слишком дорого: публичный журнал пишется построчно,
+	/// а известных значений может быть несколько десятков.
+	/// </summary>
+	private readonly Dictionary<string, Regex> _knownRegex =
+		new Dictionary<string, Regex>(StringComparer.OrdinalIgnoreCase);
+
+	/// <summary>
 	/// Регулярные выражения для того, что нельзя перечислить заранее.
 	/// Порядок важен: секреты раньше всего, чтобы не утекли через другие замены.
 	/// </summary>
@@ -86,7 +94,9 @@ public class Redactor
 		@"\b(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.)+(?:local|lan|corp|internal|ru|com|org|net|io|by|kz|ua|su)\b",
 		RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-	/// <summary>Добавляет известное значение (имя хоста, компания, ВМ) в список замены.</summary>
+	/// <summary>
+	/// Добавляет известное значение (имя хоста, компания, ВМ) в список замены.
+	/// </summary>
 	public void Register(string value, string category)
 	{
 		if (string.IsNullOrWhiteSpace(value) || value.Length < 3)
@@ -109,6 +119,31 @@ public class Redactor
 		_known.Add(v);
 		// Длинные значения заменяем первыми: иначе «server01.corp.local»
 		// превратится в «<HOST-1>.corp.local».
+		_known.Sort((a, b) => b.Length.CompareTo(a.Length));
+	}
+
+	/// <summary>
+	/// Явно известный секрет (пароль, токен из конфигурации).
+	///
+	/// Отличие от <see cref="Register"/>: здесь не работает «слишком общее»
+	/// правило — пароль может быть коротким и нелепым, и именно поэтому его
+	/// нельзя оставлять. Нижняя граница в четыре символа: заменять «1» или
+	/// «да» по всему тексту бессмысленно, а вот трёхсимвольный пароль
+	/// в открытом виде — уже утечка.
+	/// </summary>
+	public void RegisterSecret(string value)
+	{
+		if (string.IsNullOrWhiteSpace(value) || value.Length < 4)
+		{
+			return;
+		}
+		string v = value.Trim();
+		if (v.Length < 4 || _map.ContainsKey(v))
+		{
+			return;
+		}
+		_map[v] = "<SECRET>";
+		_known.Add(v);
 		_known.Sort((a, b) => b.Length.CompareTo(a.Length));
 	}
 
@@ -189,8 +224,7 @@ public class Redactor
 			{
 				continue;
 			}
-			Regex re = new Regex(Regex.Escape(known), RegexOptions.IgnoreCase);
-			s = re.Replace(s, _map[known]);
+			s = KnownRegex(known).Replace(s, _map[known]);
 			Count("known");
 		}
 
@@ -232,6 +266,17 @@ public class Redactor
 	}
 
 	// ------------------------------------------------------------- утилиты
+
+	private Regex KnownRegex(string known)
+	{
+		if (_knownRegex.TryGetValue(known, out Regex re))
+		{
+			return re;
+		}
+		re = new Regex(Regex.Escape(known), RegexOptions.IgnoreCase | RegexOptions.Compiled);
+		_knownRegex[known] = re;
+		return re;
+	}
 
 	private void Count(string category)
 	{

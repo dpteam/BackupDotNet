@@ -36,7 +36,7 @@
   "zip": { "tempDir": "", "crcReadBufferKb": 256 },
   "zabbix": { "...": "см. docs/ZABBIX.md" },
   "web": { "requireAuth": true, "sessionTimeoutMinutes": 480 },
-  "logging": { "level": "info", "maxFileSizeMb": 32, "keepDays": 90 }
+  "logging": { "level": "info", "maxFileSizeMb": 32, "keepDays": 90, "publicEnabled": true }
 }
 ```
 
@@ -77,9 +77,16 @@ netsh http add urlacl url=http://+:8080/ user="NT AUTHORITY\SYSTEM"
 | `level` | `info` | `debug`, `info`, `warn`, `error` |
 | `maxFileSizeMb` | `32` | Размер файла до ротации |
 | `keepDays` | `90` | Сколько дней хранить журналы (0 — не чистить) |
+| `publicEnabled` | `true` | Вести второй журнал — без секретов, адресов и имён |
 
 На уровне `debug` в журнал попадают стеки исключений — полезно при разборе инцидентов,
 но файл растёт заметно быстрее.
+
+`publicEnabled` включает второй файл `<Продукт>.public_<дата>.log`: тот же поток
+сообщений, но каждая строка проходит через `Redactor` — пароли, токены, адреса,
+почта, имена машин и пути с именами пользователей заменяются плейсхолдерами.
+Такой журнал можно отдать подрядчику или приложить к тикету, не вычитывая
+построчно. Переключается на лету кнопкой «публичный» на странице «Журналы».
 
 ### `notifications`
 | Ключ | По умолчанию | Описание |

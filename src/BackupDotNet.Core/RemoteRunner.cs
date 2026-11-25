@@ -36,7 +36,8 @@ public static class RemoteRunner
 			return 2;
 		}
 		Settings local = LocalSettings(root);
-		Log.Init(Path.Combine(local.DataDir, "logs"), local.LogLevel, local.LogMaxMb, echo: Environment.UserInteractive);
+		Log.Init(Path.Combine(local.DataDir, "logs"), local.LogLevel, local.LogMaxMb,
+			echo: Environment.UserInteractive, publicEnabled: local.LogPublicEnabled);
 		Log.Cleanup(Path.Combine(local.DataDir, "logs"), local.LogKeepDays);
 		Log.Info("Удалённый агент " + cfg.AgentId + " → " + cfg.CentralUrl);
 		Console.WriteLine("Удалённый агент: " + cfg.AgentId);

@@ -497,6 +497,11 @@ public class ApiHandler
 				HandleLogPack(ctx, session);
 				return;
 			}
+			if (path == "/api/logs/public" && method == "POST")
+			{
+				HandleLogPublicToggle(ctx, session);
+				return;
+			}
 			if (path == "/api/updates/check" && method == "POST")
 			{
 				HandleUpdateCheck(ctx, session);
@@ -1104,6 +1109,7 @@ public class ApiHandler
 			dir = Path.Combine(_settings.DataDir, "logs");
 		}
 		string current = Log.CurrentFile;
+		string currentPublic = Log.PublicFile;
 		List<object> files = new List<object>();
 		foreach (FileInfo f in Log.ListFiles(dir))
 		{
@@ -1112,13 +1118,96 @@ public class ApiHandler
 			d["size"] = f.Length;
 			d["modified"] = f.LastWriteTime;
 			d["current"] = string.Equals(f.FullName, current, StringComparison.OrdinalIgnoreCase);
+			// Публичный журнал: без секретов, его можно отдать наружу.
+			d["public"] = string.Equals(f.FullName, currentPublic, StringComparison.OrdinalIgnoreCase) ||
+				Log.IsPublicName(f.Name);
 			files.Add(d);
 		}
 		Dictionary<string, object> res = Json.Obj();
 		res["dir"] = dir;
 		res["current"] = string.IsNullOrEmpty(current) ? "" : Path.GetFileName(current);
+		res["currentPublic"] = string.IsNullOrEmpty(currentPublic) ? "" : Path.GetFileName(currentPublic);
+		res["publicEnabled"] = Log.PublicEnabled;
 		res["files"] = files;
 		res["level"] = Log.Level.ToString().ToLowerInvariant();
+		WriteJson(ctx, res, 200);
+	}
+
+	/// <summary>
+	/// POST /api/logs/public {"enabled":true} — включить или выключить
+	/// «публичный» журнал с вычищенными секретами.
+	///
+	/// Настройка сохраняется в <c>config/settings.json</c> и применяется сразу,
+	/// без перезапуска службы: <see cref="Log.Init"/> идемпотентен и умеет
+	/// подключать и снимать второй листенер на ходу.
+	/// </summary>
+	private void HandleLogPublicToggle(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanManageUsers(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+
+		string body = "";
+		try
+		{
+			using StreamReader sr = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+			body = sr.ReadToEnd();
+		}
+		catch
+		{
+		}
+
+		bool enabled;
+		try
+		{
+			Dictionary<string, object> d = Json.ParseObject(body);
+			enabled = Json.Bool(Json.Get(d, "enabled"), _settings.LogPublicEnabled);
+		}
+		catch
+		{
+			WriteJson(ctx, Json.Obj("error", "не разобрать тело запроса"), 400);
+			return;
+		}
+
+		// 1. Настройка в памяти — чтобы включение работало даже без файла.
+		_settings.LogPublicEnabled = enabled;
+
+		// 2. Файл настроек: правим только один ключ, остальное не трогаем.
+		string settingsPath = Path.Combine(_config.ConfigDir, "settings.json");
+		bool saved = false;
+		try
+		{
+			Dictionary<string, object> root = Json.ParseObject(File.ReadAllText(settingsPath));
+			Dictionary<string, object> logging = Json.AsObject(Json.Get(root, "logging"));
+			if (logging == null)
+			{
+				logging = Json.Obj();
+				root["logging"] = logging;
+			}
+			logging["publicEnabled"] = enabled;
+			ConfigLoader.AtomicWrite(settingsPath, Json.WritePretty(root));
+			saved = true;
+		}
+		catch (Exception ex)
+		{
+			Log.Warn("Сохранение logging.publicEnabled: " + ex.Message);
+		}
+
+		// 3. Применяем сразу: листенер подключается или снимается.
+		Log.Init(Log.Dir, _settings.LogLevel, _settings.LogMaxMb,
+			echo: Environment.UserInteractive, publicEnabled: enabled);
+
+		Dictionary<string, object> res = Json.Obj();
+		res["ok"] = true;
+		res["enabled"] = enabled;
+		res["saved"] = saved;
+		res["publicFile"] = Log.PublicFile;
+		if (!saved)
+		{
+			res["note"] = "включено до перезапуска: не удалось записать settings.json";
+		}
 		WriteJson(ctx, res, 200);
 	}
 
@@ -3021,6 +3110,7 @@ public class ApiHandler
 		d["zabbixApiEnabled"] = _settings.ZabbixApiEnabled;
 		d["zabbixAutoCreateHosts"] = _settings.ZabbixAutoCreateHosts;
 		d["webRequireAuth"] = _settings.WebRequireAuth;
+		d["logPublicEnabled"] = _settings.LogPublicEnabled;
 		d["configErrors"] = ToList(_config.LoadErrors);
 		d["collectorTypes"] = ToList(new List<string>(Collectors.Types));
 

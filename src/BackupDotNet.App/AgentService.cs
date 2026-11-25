@@ -67,7 +67,8 @@ public class AgentService : ServiceBase
 		ConfigLoader cfg = new ConfigLoader(_root);
 		cfg.Load();
 		string logDir = Path.Combine(cfg.Settings.DataDir, "logs");
-		Log.Init(logDir, cfg.Settings.LogLevel, cfg.Settings.LogMaxMb, echo: false);
+		Log.Init(logDir, cfg.Settings.LogLevel, cfg.Settings.LogMaxMb, echo: false,
+			publicEnabled: cfg.Settings.LogPublicEnabled);
 		Log.Cleanup(logDir, cfg.Settings.LogKeepDays);
 		Log.Info("=== " + Branding.Current.FullName + " " + Program.AgentVersion + " (служба) ===");
 		Log.Info("Каталог программы: " + _root);

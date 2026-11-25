@@ -34,6 +34,11 @@ public static class Log
 
 	private static FileTraceListener _file;
 
+	/// <summary>Второй файл журнала: то же самое, но с вычищенными секретами.</summary>
+	private static PublicFileListener _public;
+
+	private static bool _publicEnabled = true;
+
 	private static string _dir;
 
 	private static string _product = "BackupDotNet";
@@ -70,6 +75,53 @@ public static class Log
 		}
 	}
 
+	/// <summary>
+	/// Путь к «публичному» журналу (пустая строка, если он не ведётся).
+	/// В нём нет секретов, адресов и имён — его можно отдать наружу.
+	/// </summary>
+	public static string PublicFile
+	{
+		get
+		{
+			lock (Sync)
+			{
+				return _public?.Path ?? "";
+			}
+		}
+	}
+
+	/// <summary>Ведётся ли сейчас публичный журнал.</summary>
+	public static bool PublicEnabled
+	{
+		get
+		{
+			lock (Sync)
+			{
+				return _public != null;
+			}
+		}
+	}
+
+	/// <summary>
+	/// Запоминает значение, которое нельзя показывать в публичном журнале.
+	/// Нужно вызывать при старте для паролей и токенов из конфигурации:
+	/// шаблоны ловят только «password=…», а голый пароль в тексте ошибки —
+	/// нет.
+	/// </summary>
+	public static void RegisterSecret(string value)
+	{
+		try
+		{
+			lock (Sync)
+			{
+				_public?.RegisterSecret(value);
+			}
+		}
+		catch
+		{
+		}
+	}
+
 	/// <summary>Текущий порог: сообщения ниже него отбрасываются.</summary>
 	public static LogLevel Level
 	{
@@ -91,13 +143,17 @@ public static class Log
 	/// <param name="level">debug | info | warn | error.</param>
 	/// <param name="maxMb">Предел размера файла в мегабайтах до ротации.</param>
 	/// <param name="echo">Дублировать вывод в консоль.</param>
-	public static void Init(string dir, string level, int maxMb, bool echo)
+	/// <param name="publicEnabled">
+	/// Вести ли второй, «публичный» журнал с вычищенными секретами и адресами.
+	/// </param>
+	public static void Init(string dir, string level, int maxMb, bool echo, bool publicEnabled = true)
 	{
 		lock (Sync)
 		{
 			_min = ParseLevel(level);
 			_maxBytes = Math.Max(1, maxMb) * 1024L * 1024L;
 			_echo = echo;
+			_publicEnabled = publicEnabled;
 			_product = SafeProductName();
 
 			bool dirChanged = !string.Equals(_dir, dir, StringComparison.OrdinalIgnoreCase);
@@ -176,6 +232,33 @@ public static class Log
 				_file.MaxBytes = _maxBytes;
 			}
 
+			// --- публичный журнал ----------------------------------------------
+			// Тот же поток сообщений, но каждая строка проходит через Redactor.
+			// Отдельный файл с суффиксом .public — его можно отдать наружу.
+			if (string.IsNullOrEmpty(_dir) || !_publicEnabled)
+			{
+				DetachPublic();
+			}
+			else if (_public == null || dirChanged)
+			{
+				DetachPublic();
+				try
+				{
+					_public = new PublicFileListener(_dir, _product, _maxBytes);
+					_public.Name = ListenerTag + ":public";
+					_public.TraceOutputOptions = TraceOptions.None;
+					_source.Listeners.Add(_public);
+				}
+				catch
+				{
+					_public = null;
+				}
+			}
+			else
+			{
+				_public.MaxBytes = _maxBytes;
+			}
+
 			_source.Switch.Level = ToTraceLevel(_min);
 			_initialized = true;
 		}
@@ -187,6 +270,7 @@ public static class Log
 		lock (Sync)
 		{
 			DetachFile();
+			DetachPublic();
 			if (_console != null)
 			{
 				try
@@ -352,6 +436,31 @@ public static class Log
 		_file = null;
 	}
 
+	/// <summary>Снимает публичный листенер и закрывает его файл.</summary>
+	private static void DetachPublic()
+	{
+		if (_public == null)
+		{
+			return;
+		}
+		try
+		{
+			_source?.Listeners.Remove(_public);
+		}
+		catch
+		{
+		}
+		try
+		{
+			_public.Flush();
+			_public.Close();
+		}
+		catch
+		{
+		}
+		_public = null;
+	}
+
 	private static string SafeProductName()
 	{
 		string name = "";
@@ -417,15 +526,18 @@ public static class Log
 		try
 		{
 			DateTime cutoff = DateTime.Now.AddDays(-keepDays);
+			string active = Path.GetFileName(CurrentFile);
+			string activePublic = Path.GetFileName(PublicFile);
 			string[] files = Directory.GetFiles(dir, "*.log");
 			foreach (string f in files)
 			{
 				try
 				{
 					string name = Path.GetFileName(f);
-					if (string.Equals(name, Path.GetFileName(CurrentFile), StringComparison.OrdinalIgnoreCase))
+					if (string.Equals(name, active, StringComparison.OrdinalIgnoreCase) ||
+						string.Equals(name, activePublic, StringComparison.OrdinalIgnoreCase))
 					{
-						continue; // не трогаем активный файл
+						continue; // не трогаем активные файлы
 					}
 					if (File.GetLastWriteTime(f) < cutoff)
 					{
@@ -440,6 +552,21 @@ public static class Log
 		catch
 		{
 		}
+	}
+
+	/// <summary>
+	/// Публичный ли это журнал (тот, что пишется с вычисткой).
+	/// Имя вида <c>&lt;Продукт&gt;.public_&lt;дата&gt;.log</c>.
+	/// </summary>
+	public static bool IsPublicName(string fileName)
+	{
+		if (string.IsNullOrEmpty(fileName))
+		{
+			return false;
+		}
+		string name = Path.GetFileName(fileName);
+		int dot = name.IndexOf(".public_", StringComparison.OrdinalIgnoreCase);
+		return dot > 0 && name.EndsWith(".log", StringComparison.OrdinalIgnoreCase);
 	}
 
 	/// <summary>Список журналов каталога, свежие сверху. Для веб-интерфейса.</summary>
@@ -638,13 +765,16 @@ public static class Log
 	/// ротация по размеру. Держит файл с FileShare.ReadWrite, чтобы журнал можно
 	/// было читать (и открыть в блокноте) во время работы агента.
 	/// </summary>
-	private sealed class FileTraceListener : PlainTraceListener
+	private class FileTraceListener : PlainTraceListener
 	{
 		private readonly object _lock = new object();
 
 		private readonly string _dir;
 
 		private readonly string _prefix;
+
+		/// <summary>Добавка к имени файла: пустая у основного, «.public» у второго.</summary>
+		private readonly string _suffix;
 
 		private FileStream _stream;
 
@@ -656,23 +786,53 @@ public static class Log
 
 		public string Path { get; private set; }
 
-		public FileTraceListener(string dir, string prefix, long maxBytes)
+		public FileTraceListener(string dir, string prefix, long maxBytes, string suffix = "")
 		{
 			_dir = dir;
 			_prefix = prefix;
+			_suffix = suffix ?? "";
 			MaxBytes = maxBytes;
-			OpenNew();
+			// Файл открывается при первой записи: переключение журнала
+			// не должно оставлять пустые файлы в каталоге.
+		}
+
+		/// <summary>
+		/// Преобразование строки перед записью. Основной журнал пишет как есть,
+		/// публичный — переопределяет и вычищает секреты.
+		/// </summary>
+		protected virtual string Transform(string message)
+		{
+			return message;
+		}
+
+		/// <summary>Открывает файл, если он ещё не открыт.</summary>
+		private bool EnsureOpen()
+		{
+			if (_writer != null)
+			{
+				return true;
+			}
+			try
+			{
+				OpenNew();
+				return _writer != null;
+			}
+			catch
+			{
+				_writer = null;
+				return false;
+			}
 		}
 
 		private void OpenNew()
 		{
 			Directory.CreateDirectory(_dir);
 			string stamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss", CultureInfo.InvariantCulture);
-			string path = System.IO.Path.Combine(_dir, _prefix + "_" + stamp + ".log");
+			string path = System.IO.Path.Combine(_dir, _prefix + _suffix + "_" + stamp + ".log");
 			int n = 1;
 			while (File.Exists(path))
 			{
-				path = System.IO.Path.Combine(_dir, _prefix + "_" + stamp + "_" + n.ToString(CultureInfo.InvariantCulture) + ".log");
+				path = System.IO.Path.Combine(_dir, _prefix + _suffix + "_" + stamp + "_" + n.ToString(CultureInfo.InvariantCulture) + ".log");
 				n++;
 			}
 			_stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
@@ -697,14 +857,15 @@ public static class Log
 		{
 			lock (_lock)
 			{
-				if (_writer == null)
+				if (!EnsureOpen())
 				{
 					return;
 				}
 				try
 				{
-					_writer.WriteLine(message);
-					_written += Encoding.UTF8.GetByteCount(message) + 2;
+					string text = Transform(message);
+					_writer.WriteLine(text);
+					_written += Encoding.UTF8.GetByteCount(text) + 2;
 					if (MaxBytes > 0 && _written >= MaxBytes)
 					{
 						Rotate();
@@ -791,6 +952,76 @@ public static class Log
 				Close();
 			}
 			base.Dispose(disposing);
+		}
+	}
+
+	/// <summary>
+	/// «Публичный» журнал: тот же поток сообщений, но каждая строка проходит
+	/// через <see cref="Support.Redactor"/> — пароли, токены, адреса, почта,
+	/// имена машин и пути с именами пользователей заменяются плейсхолдерами.
+	///
+	/// Зачем второй файл, а не экспорт по требованию: экспорт делается постфактум
+	/// и требует доверия к тому, что в момент экспорта ничего не забыли. Поток,
+	/// который с самого начала не содержит секретов, можно отдать сразу —
+	/// подрядчику, вендору, в тикет.
+	///
+	/// Важно: замена идёт <b>по шаблонам</b>, поэтому секреты, которые не похожи
+	/// ни на один шаблон, надо явно зарегистрировать через
+	/// <see cref="RegisterSecret"/> при старте.
+	/// </summary>
+	private sealed class PublicFileListener : FileTraceListener
+	{
+		private readonly Support.Redactor _redactor = new Support.Redactor();
+
+		public PublicFileListener(string dir, string prefix, long maxBytes)
+			: base(dir, prefix, maxBytes, ".public")
+		{
+			// Имя этой машины встречается в журнале постоянно и является
+			// идентификатором: в публичном журнале его быть не должно.
+			try
+			{
+				_redactor.Register(Environment.MachineName, "HOST");
+			}
+			catch
+			{
+			}
+
+			// Пути установки выдают структуру каталогов и имя пользователя.
+			// Регистрируем их как известные значения: длинные пути заменяются
+			// целиком, поэтому «E:\Projects\Client\bin\» станет <PATH-1>.
+			try
+			{
+				_redactor.Register(dir, "PATH");
+				string parent = System.IO.Path.GetDirectoryName(dir.TrimEnd('\\', '/'));
+				if (!string.IsNullOrEmpty(parent))
+				{
+					_redactor.Register(parent, "PATH");
+				}
+				_redactor.Register(AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\', '/'), "PATH");
+			}
+			catch
+			{
+			}
+		}
+
+		/// <summary>Явно известный секрет: будет заменён на &lt;SECRET&gt;.</summary>
+		public void RegisterSecret(string value)
+		{
+			_redactor.RegisterSecret(value);
+		}
+
+		protected override string Transform(string message)
+		{
+			try
+			{
+				return _redactor.Redact(message);
+			}
+			catch
+			{
+				// Если вычистка упала, писать исходную строку нельзя: смысл
+				// публичного журнала в том, что в нём нет секретов.
+				return "(строка скрыта: ошибка вычистки)";
+			}
 		}
 	}
 }

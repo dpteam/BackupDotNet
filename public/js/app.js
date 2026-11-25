@@ -3733,13 +3733,30 @@
 
       var opts = files.map(function (f) {
         return '<option value="' + esc(f.name) + '"' + (f.name === logsState.file ? ' selected' : '') + '>' +
+          (f['public'] ? '🔓 public · ' : '') +
           esc(f.name) + '  ·  ' + fmtSize(f.size) + '  ·  ' + fmtDateTime(f.modified) + '</option>';
       }).join('');
 
+      var selected = files.filter(function (f) { return f.name === logsState.file; })[0];
+      var isPublic = selected && selected['public'];
+
       var html = '<h2 class="page-title"><i class="fas fa-file-alt"></i> Журналы</h2>';
+
+      // Публичный журнал — без секретов и адресов. Полезно объяснить это
+      // прямо здесь: иначе непонятно, почему в одном файле есть имена,
+      // а в другом нет.
+      if (isPublic) {
+        html += '<div class="note ok"><i class="fas fa-lock-open"></i><div>' +
+          'Это <b>публичный</b> журнал: пароли, токены, адреса, почта, имена машин и пути ' +
+          'с именами пользователей заменены плейсхолдерами. Его можно отдать подрядчику ' +
+          'или приложить к тикету. Полная версия — журнал без пометки <code>public</code>.' +
+          '</div></div>';
+      }
 
       html += '<div class="card"><div class="card-head"><i class="fas fa-terminal"></i> Журнал агента' +
         '<span class="spacer"></span>' +
+        '<label class="log-auto" title="Второй файл: тот же журнал, но без секретов и адресов">' +
+        '<input type="checkbox" id="logs-public"' + (data.publicEnabled ? ' checked' : '') + '> публичный</label>' +
         '<label class="log-auto"><input type="checkbox" id="logs-auto"' + (logsState.auto ? ' checked' : '') + '> автообновление</label>' +
         '<button class="btn btn-sm" id="logs-refresh"><i class="fas fa-sync-alt"></i> Обновить</button>' +
         '</div><div class="card-body">' +
@@ -3773,7 +3790,9 @@
 
       document.getElementById('logs-file').addEventListener('change', function () {
         logsState.file = this.value;
-        loadTail();
+        // Перерисовываем страницу целиком: от выбранного файла зависит
+        // и пояснение о публичном журнале.
+        renderLogs();
       });
       document.getElementById('logs-lines').addEventListener('change', function () {
         logsState.lines = Number(this.value) || 400;
@@ -3784,6 +3803,23 @@
         logsState.auto = this.checked;
         stopLogsPolling();
         if (logsState.auto) logsState.timer = setInterval(loadTail, 5000);
+      });
+      document.getElementById('logs-public').addEventListener('change', function () {
+        var box = this;
+        box.disabled = true;
+        api('/api/logs/public', { method: 'POST', body: { enabled: box.checked } })
+          .then(function (r) {
+            // Новый файл появляется сразу — перерисовываем, чтобы он был в списке.
+            renderLogs();
+            if (r.note) {
+              setTimeout(function () { toast(r.note); }, 300);
+            }
+          })
+          .catch(function (err) {
+            box.checked = !box.checked;
+            box.disabled = false;
+            toast('Не удалось: ' + err.message);
+          });
       });
 
       if (logsState.auto) logsState.timer = setInterval(loadTail, 5000);

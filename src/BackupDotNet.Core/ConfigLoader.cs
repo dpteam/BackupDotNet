@@ -179,6 +179,10 @@ public class ConfigLoader
 		}
 		if (_secrets.TryGetValue(key, out var v))
 		{
+			// Каждый выданный наружу секрет запоминаем для публичного журнала:
+			// иначе голый пароль в тексте исключения уйдёт в файл, который
+			// предназначен для передачи вендору.
+			Log.RegisterSecret(v);
 			return v;
 		}
 		return "";
@@ -189,6 +193,7 @@ public class ConfigLoader
 		if (!string.IsNullOrEmpty(key))
 		{
 			_secrets[key] = value ?? "";
+			Log.RegisterSecret(value);
 		}
 	}
 

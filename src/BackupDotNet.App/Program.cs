@@ -190,7 +190,8 @@ public static class Program
 		cfg = new ConfigLoader(root);
 		cfg.Load();
 		string logDir = Path.Combine(cfg.Settings.DataDir, "logs");
-		Log.Init(logDir, cfg.Settings.LogLevel, cfg.Settings.LogMaxMb, echo: true);
+		Log.Init(logDir, cfg.Settings.LogLevel, cfg.Settings.LogMaxMb, echo: true,
+			publicEnabled: cfg.Settings.LogPublicEnabled);
 		Log.Cleanup(logDir, cfg.Settings.LogKeepDays);
 		Log.Info("=== " + Branding.Current.FullName + " " + AgentVersion + " ===");
 		Log.Info("Каталог программы: " + root);
