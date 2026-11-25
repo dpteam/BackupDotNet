@@ -289,6 +289,12 @@ public static class Program
 		{
 			WriteGeneratedPassword(root, auth.GeneratedPassword, cfg.Settings.HttpPort);
 		}
+		else
+		{
+			// Пароль уже был — но адрес в файле мог остаться от прошлой
+			// установки с другим портом. Правим только строку с адресом.
+			RefreshAgentMdPort(root, cfg.Settings.HttpPort);
+		}
 		AuditLog audit = new AuditLog(cfg.Settings.DataDir);
 		WebHost web = new WebHost(cfg.Settings, cfg, store, scheduler, auth, audit);
 		web.Start();
@@ -314,6 +320,71 @@ public static class Program
 		return 0;
 	}
 
+	/// <summary>
+	/// Обновляет адрес веб-интерфейса в уже существующем auth/AGENT.md.
+	///
+	/// Зачем отдельно от <see cref="WriteGeneratedPassword"/>: тот пишет файл
+	/// только когда пароль сгенерирован, то есть при первом запуске. При
+	/// обновлении поверх users.json уже есть, пароль не генерируется — и в
+	/// файле остаётся старый порт. Пароль в users.json хеширован, восстановить
+	/// его нельзя, поэтому правим только строку с адресом.
+	/// </summary>
+	public static void RefreshAgentMdPort(string root, int port)
+	{
+		try
+		{
+			string path = Path.Combine(root, "auth", "AGENT.md");
+			if (!File.Exists(path))
+			{
+				return;
+			}
+			if (port <= 0)
+			{
+				port = 8080;
+			}
+
+			string text = File.ReadAllText(path);
+			string wanted = "Веб-интерфейс: http://localhost:" + port + "/";
+
+			// Уже правильный адрес — не трогаем файл.
+			if (text.IndexOf(wanted, StringComparison.Ordinal) >= 0)
+			{
+				return;
+			}
+
+			string[] lines = text.Replace("\r\n", "\n").Split('\n');
+			bool replaced = false;
+			for (int i = 0; i < lines.Length; i++)
+			{
+				if (lines[i].StartsWith("Веб-интерфейс:", StringComparison.Ordinal))
+				{
+					lines[i] = wanted;
+					replaced = true;
+					break;
+				}
+			}
+
+			if (!replaced)
+			{
+				// Строки не было — добавляем после таблицы, в конец.
+				text = text.TrimEnd() + Environment.NewLine + Environment.NewLine + wanted + Environment.NewLine;
+				File.WriteAllText(path, text, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			}
+			else
+			{
+				File.WriteAllText(path, string.Join(Environment.NewLine, lines),
+					new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			}
+			Log.Info("auth/AGENT.md: адрес обновлён на порт " + port);
+		}
+		catch (Exception ex)
+		{
+			Log.Warn("Не удалось обновить адрес в auth/AGENT.md: " + ex.Message);
+		}
+	}
+
+
+	/// <summary>Записывает сгенерированный пароль в auth/AGENT.md.</summary>
 	public static void WriteGeneratedPassword(string root, string password, int port)
 	{
 		try

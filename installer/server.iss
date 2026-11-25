@@ -309,6 +309,64 @@ begin
   Result := ServiceState(Name) = 1;
 end;
 
+{ Позиция подстроки, начиная с Start. В Pascal Script нет PosEx. }
+function PosFrom(const Sub, S: string; Start: Integer): Integer;
+var
+  I: Integer;
+  Tail: string;
+begin
+  Result := 0;
+  if Start < 1 then
+    Start := 1;
+  if Start > Length(S) then
+    Exit;
+  Tail := Copy(S, Start, Length(S) - Start + 1);
+  I := Pos(Sub, Tail);
+  if I > 0 then
+    Result := Start + I - 1;
+end;
+
+{ Порт из config\settings.json установленной копии.
+  Это главный источник: там реальная настройка, по которой работает служба.
+  install-port.txt — вспомогательный, для деинсталлятора. }
+function ReadPortFromConfig(const Dir: string): Integer;
+var
+  Raw: AnsiString;
+  S: string;
+  P, Q: Integer;
+  Num: string;
+begin
+  Result := 0;
+  if Dir = '' then
+    Exit;
+  if not LoadStringFromFile(AddBackslash(Dir) + 'config\settings.json', Raw) then
+    Exit;
+
+  S := String(Raw);
+  P := Pos('"httpPort"', S);
+  if P <= 0 then
+    Exit;
+  P := PosFrom(':', S, P + 10);
+  if P <= 0 then
+    Exit;
+
+  { Число до ближайшей запятой, закрывающей скобки или конца строки. }
+  Num := '';
+  Q := P + 1;
+  while Q <= Length(S) do
+  begin
+    if (S[Q] >= '0') and (S[Q] <= '9') then
+      Num := Num + S[Q]
+    else if Num <> '' then
+      Break;
+    Q := Q + 1;
+  end;
+
+  Result := StrToIntDef(Num, 0);
+  if (Result < 1) or (Result > 65535) then
+    Result := 0;
+end;
+
 function ReadPortFileFrom(const Dir: string): Integer;
 var
   { AnsiString, а не string: такова сигнатура LoadStringFromFile
@@ -342,7 +400,11 @@ begin
 
   if UpgradeMode then
   begin
-    PortValue := ReadPortFileFrom(PrevLocation);
+    { Порт берём из настроек прежней установки, затем из вспомогательного
+      файла, затем умолчание. Человеку не нужно вспоминать свой порт. }
+    PortValue := ReadPortFromConfig(PrevLocation);
+    if PortValue <= 0 then
+      PortValue := ReadPortFileFrom(PrevLocation);
     if PortValue <= 0 then
       PortValue := 8080;
 
@@ -363,8 +425,19 @@ begin
     'если он занят, укажите другой.');
 
   { /PORT=12345 — для тихой установки из GPO: в диалоге порт не спросить. }
-  PortParam := ExpandConstant('{param:PORT|8080}');
-  PortValue := StrToIntDef(PortParam, 8080);
+  PortParam := ExpandConstant('{param:PORT|}');
+  PortValue := StrToIntDef(PortParam, 0);
+
+  { Порт не задан параметром — пробуем взять из уже существующей
+    конфигурации. Каталог берём из define MyInstallDir, а не из константы
+    app: она в InitializeWizard ещё не инициализирована. }
+  if PortValue <= 0 then
+    PortValue := ReadPortFromConfig('{#MyInstallDir}');
+  if PortValue <= 0 then
+    PortValue := ReadPortFileFrom('{#MyInstallDir}');
+  if PortValue <= 0 then
+    PortValue := 8080;
+
   if (PortValue < 1) or (PortValue > 65535) then
     PortValue := 8080;
 

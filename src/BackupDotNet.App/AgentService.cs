@@ -46,6 +46,11 @@ public class AgentService : ServiceBase
 				Log.Warn("Создан пользователь admin, пароль: " + auth.GeneratedPassword);
 				Program.WriteGeneratedPassword(_root, auth.GeneratedPassword, cfg.Settings.HttpPort);
 			}
+			else
+			{
+				// Пароль уже был — правим адрес, если порт сменился.
+				Program.RefreshAgentMdPort(_root, cfg.Settings.HttpPort);
+			}
 			AuditLog audit = new AuditLog(cfg.Settings.DataDir);
 			_web = new WebHost(cfg.Settings, cfg, _store, _scheduler, auth, audit);
 			_web.Start();

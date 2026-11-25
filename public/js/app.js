@@ -421,10 +421,16 @@
   function hideLogin() {
     loginScreen.classList.add('hidden');
     app.classList.remove('hidden');
-    // Колокольчик уведомлений живёт вместе с приложением, не со страницей.
+    // Колокольчик и меню живут вместе с приложением, не со страницей.
+    // Привязываем один раз: при ручном входе и при авто-входе код разный,
+    // и раньше меню оставалось без обработчиков после входа через форму.
     if (!bellState.bound) {
       bellState.bound = true;
       bindBell();
+    }
+    if (!navState.bound) {
+      navState.bound = true;
+      bindNav();
     }
   }
 
@@ -463,6 +469,8 @@
   // ------------------------------------------------------------------ уведомления
 
   var bellState = { timer: null, loaded: false, bound: false };
+
+  var navState = { bound: false };
 
   /** Обновляет счётчик непрочитанных на колокольчике. */
   function refreshBell() {
@@ -719,6 +727,8 @@
       var btn = g.querySelector('.nav-group-btn');
       if (!btn) return;
 
+      // Меню открывается ТОЛЬКО по клику — как переключатель. Наведение
+      // не открывает: случайно провёл мышью по шапке и меню выскочило.
       btn.addEventListener('click', function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -727,19 +737,6 @@
         if (!wasOpen) {
           g.classList.add('open');
           positionNavMenu(g);
-        }
-      });
-
-      g.addEventListener('mouseenter', function () {
-        if (window.matchMedia('(hover: hover)').matches) {
-          $$('.nav-group').forEach(function (x) { x.classList.remove('open'); });
-          g.classList.add('open');
-          positionNavMenu(g);
-        }
-      });
-      g.addEventListener('mouseleave', function () {
-        if (window.matchMedia('(hover: hover)').matches) {
-          g.classList.remove('open');
         }
       });
     });
@@ -9761,7 +9758,6 @@
     return api('/api/summary');
   }).then(function () {
     hideLogin();
-    bindNav();
     route();
   }).catch(function () {
     // нужна авторизация
