@@ -183,7 +183,21 @@ public class Branding
 			ZabbixTemplateName = Str(src, root, "zabbixTemplateName", ZabbixTemplateName);
 		}
 		InstallDir = Str(src, root, "installDir", InstallDir);
-		AgentInstallDir = Str(src, root, "agentInstallDir", InstallDir.TrimEnd('\\') + "Agent");
+		// Каталог агента выводим из серверного только если тот абсолютный:
+		// у локального экземпляра installDir бывает относительным («bin\»),
+		// и «binAgent» в качестве пути к агенту — бессмысленно.
+		string agentDir = AgentInstallDir;
+		try
+		{
+			if (!string.IsNullOrWhiteSpace(InstallDir) && Path.IsPathRooted(InstallDir))
+			{
+				agentDir = InstallDir.TrimEnd('\\') + "Agent";
+			}
+		}
+		catch (ArgumentException)
+		{
+		}
+		AgentInstallDir = Str(src, root, "agentInstallDir", agentDir);
 		DataDir = Str(src, root, "dataDir", DataDir);
 		ServiceName = Str(src, root, "serviceName", ServiceName);
 		ServiceNameRemote = Str(src, root, "serviceNameRemote", ServiceNameRemote);

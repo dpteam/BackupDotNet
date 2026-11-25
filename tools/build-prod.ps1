@@ -194,6 +194,9 @@ if (Test-Path $docsSrc) {
     $docsDst = Join-Path $bin 'docs'
     New-Item -ItemType Directory -Force -Path $docsDst | Out-Null
     Copy-Item (Join-Path $docsSrc '*') $docsDst -Recurse -Force
+    # docs/HANDOFF-* — заметки для продолжения работы, а не документация:
+    # в прод-инстанс им незачем.
+    Get-ChildItem $docsDst -Filter 'HANDOFF-*' -File -ErrorAction SilentlyContinue | Remove-Item -Force
 }
 
 # ------------------------------------------------------- 7. итог
