@@ -548,6 +548,8 @@
     state.route = parts[0] || 'dashboard';
     state.companyId = parts[1] ? decodeURIComponent(parts[1]) : null;
     state.sub = parts[2] ? decodeURIComponent(parts[2]) : null;
+    // Четвёртый сегмент — id источника: #/company/acme/edit/veeam-1
+    state.subId = parts[3] ? decodeURIComponent(parts[3]) : null;
   }
 
   function setActiveNav() {
@@ -578,7 +580,9 @@
     if (state.route === 'audit') return renderAudit();
     if (state.route === 'settings') return renderSettings();
     if (state.route === 'company') {
-      if (state.sub === 'edit' || state.companyId === 'new') return renderCompanyForm(state.companyId);
+      if (state.sub === 'edit' || state.companyId === 'new') {
+        return renderCompanyForm(state.companyId, state.subId);
+      }
       return renderCompany(state.companyId);
     }
     return renderDashboard();
@@ -1508,8 +1512,14 @@
       }
 
       if (c.sources && c.sources.length) {
+        // Ссылка на конкретный источник: страница компании → форма,
+        // прокрутка к нужному блоку. Удобно кинуть коллеге в чат:
+        // «смотри, у него вот этот источник молчит».
         html += '<div class="k">Источники</div><div>' + c.sources.map(function (s) {
-          return '<code>' + esc(s.type) + '</code>' + (s.enabled ? '' : ' <span class="muted">(выкл)</span>');
+          var name = s.jobName || s.id || s.type;
+          return '<a class="src-link" href="#/company/' + encodeURIComponent(c.id) +
+            '/edit/' + encodeURIComponent(s.id || '') + '">' + esc(name) + '</a>' +
+            ' <code>' + esc(s.type) + '</code>' + (s.enabled ? '' : ' <span class="muted">(выкл)</span>');
         }).join('<br>') + '</div>';
       }
       html += '</div></div></div>';
@@ -6668,7 +6678,7 @@
     return out.replace(/-+/g, '-').replace(/^-|-$/g, '').substring(0, 40);
   }
 
-  function renderCompanyForm(companyId) {
+  function renderCompanyForm(companyId, focusSource) {
     var isNew = !companyId || companyId === 'new';
     view.innerHTML = '<div class="muted">Загрузка…</div>';
 
@@ -6680,6 +6690,7 @@
       var f = normalizeForForm(data);
       f._isNew = isNew;
       f._origId = isNew ? '' : companyId;
+      f._focusSource = focusSource || '';
 
       // список удалённых агентов — для выбора, кто проверяет компанию
       api('/api/agents').then(function (res) {
@@ -6946,6 +6957,9 @@
 
     view.innerHTML = html;
 
+    // ---- переход по ссылке на конкретный источник
+    focusSourceBlock(f);
+
     // ---- живая проверка: ошибки подсвечиваются до сохранения
     attachLiveValidation(f);
 
@@ -7053,6 +7067,25 @@
         if (!idInput.dataset.touched) idInput.value = slugifyRu(nameInput.value);
       });
       idInput.addEventListener('input', function () { idInput.dataset.touched = '1'; });
+    }
+  }
+
+  /**
+   * Прокрутка к источнику из ссылки #/company/<id>/edit/<sourceId>.
+   * Подсветка нужна, потому что блоков может быть десяток и глазами
+   * нужный не найти.
+   */
+  function focusSourceBlock(f) {
+    if (!f || !f._focusSource) return;
+    var list = f.sources || [];
+    for (var i = 0; i < list.length; i++) {
+      if (String(list[i].id) !== String(f._focusSource)) continue;
+      var block = $('[data-src="' + i + '"]');
+      if (!block) return;
+      block.scrollIntoView({ block: 'center' });
+      block.classList.add('src-focus');
+      setTimeout(function () { block.classList.remove('src-focus'); }, 2600);
+      return;
     }
   }
 

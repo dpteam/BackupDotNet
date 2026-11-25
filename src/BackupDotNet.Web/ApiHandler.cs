@@ -953,6 +953,13 @@ public class ApiHandler
 			d3["id"] = s.Id;
 			d3["type"] = s.Type;
 			d3["enabled"] = s.Enabled;
+			// Человеческое имя задания: по нему строятся ссылки на источник,
+			// и «1С · ежедневный бэкап» понятнее, чем «files-1c».
+			string jobName = s.GetStr("jobName", "");
+			if (!string.IsNullOrEmpty(jobName))
+			{
+				d3["jobName"] = jobName;
+			}
 			sources.Add(d3);
 		}
 		List<object> history = new List<object>();

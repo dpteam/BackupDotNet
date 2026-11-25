@@ -1525,6 +1525,13 @@ kbd {
 .src-test.bad { color: var(--fail); }
 .src-test.running { color: var(--muted); }
 
+/* Переход по ссылке на источник: подсветка на пару секунд. */
+.src-block.src-focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px var(--brand-soft, rgba(0, 136, 255, .25));
+  transition: box-shadow .3s ease, border-color .3s ease;
+}
+
 .fld-msg.sources-mark { margin: 0 0 10px; font-weight: 600; }
 
 /* ---------------------------------------------------------------- конфигурация: экспорт/импорт */
