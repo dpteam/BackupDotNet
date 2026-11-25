@@ -462,6 +462,11 @@ public class ApiHandler
 				HandleVeeamTest(ctx);
 				return;
 			}
+			if (path == "/api/source/test" && method == "POST")
+			{
+				HandleSourceTest(ctx, session);
+				return;
+			}
 			switch (path)
 			{
 			case "/api/uptime":
@@ -3918,6 +3923,190 @@ public class ApiHandler
 			resp["jobsError"] = jobsError;
 		}
 		WriteJson(ctx, resp, 200);
+	}
+
+	/// <summary>
+	/// POST /api/source/test — «Проверить» до сохранения.
+	///
+	/// Прогоняет один коллектор по параметрам из формы и возвращает результат,
+	/// ничего не записывая: ни в историю, ни в состояние, ни в конфигурацию.
+	/// Смысл в том, чтобы человек узнал про опечатку в адресе или закрытый порт
+	/// до сохранения, а не через час по пустому графику.
+	///
+	/// Пароль: если в форме пусто, берётся сохранённый по ключу
+	/// <c>passwordSecretKey</c> — иначе при правке любого поля источника
+	/// проверка падала бы с «не задан пароль».
+	/// </summary>
+	private void HandleSourceTest(HttpListenerContext ctx, SessionInfo si)
+	{
+		if (!Roles.CanWrite(si.Role))
+		{
+			WriteJson(ctx, Json.Obj("error", "недостаточно прав"), 403);
+			return;
+		}
+
+		Dictionary<string, object> body = ReadJson(ctx);
+		string companyId = Json.GetStr(body, "company", "").Trim();
+		Dictionary<string, object> srcDict = Json.AsObject(Json.Get(body, "source"));
+
+		Dictionary<string, object> res = Json.Obj();
+		if (srcDict == null || srcDict.Count == 0)
+		{
+			res["ok"] = false;
+			res["error"] = "не передан источник";
+			WriteJson(ctx, res, 200);
+			return;
+		}
+
+		// Пароль из формы, иначе — сохранённый.
+		string password = Json.GetStr(srcDict, "password", "");
+		if (password.Length == 0)
+		{
+			string secretKey = Json.GetStr(srcDict, "passwordSecretKey", "");
+			if (secretKey.Length > 0)
+			{
+				password = _config.Secret(secretKey);
+			}
+		}
+		if (password.Length > 0)
+		{
+			srcDict["password"] = password;
+		}
+
+		Source source = Source.FromJson(srcDict);
+		if (source == null || source.Type.Length == 0)
+		{
+			res["ok"] = false;
+			res["error"] = "не выбран тип источника";
+			WriteJson(ctx, res, 200);
+			return;
+		}
+		if (source.Id.Length == 0)
+		{
+			source.Id = source.Type;
+		}
+
+		ICollector collector = Collectors.Get(source.Type);
+		if (collector == null)
+		{
+			res["ok"] = false;
+			res["error"] = "неизвестный тип источника: " + source.Type;
+			res["types"] = ToList(new List<string>(Collectors.Types));
+			WriteJson(ctx, res, 200);
+			return;
+		}
+
+		// Компания: существующая, а для новой — временная. Коллектору нужны
+		// только id и имя для текста сообщений, файл компании ему не нужен.
+		Company company = null;
+		foreach (Company c in _config.Companies)
+		{
+			if (string.Equals(c.Id, companyId, StringComparison.OrdinalIgnoreCase))
+			{
+				company = c;
+				break;
+			}
+		}
+		if (company == null)
+		{
+			company = new Company
+			{
+				Id = companyId.Length > 0 ? companyId : "test",
+				Name = companyId.Length > 0 ? companyId : "проверка"
+			};
+			company.ShortName = company.Name;
+		}
+
+		AgentCtx agentCtx = new AgentCtx(_settings, _config, _store);
+		List<CollectResult> results = null;
+		Exception failure = null;
+		DateTime started = DateTime.Now;
+
+		// Коллекторы синхронные и могут ждать сеть. Ограничиваем ожидание,
+		// чтобы страница не висела: если источник не ответил за минуту,
+		// это уже и есть результат проверки.
+		Thread worker = new Thread(delegate ()
+		{
+			try
+			{
+				results = collector.Collect(company, source, agentCtx);
+			}
+			catch (Exception ex)
+			{
+				failure = ex;
+			}
+		});
+		worker.IsBackground = true;
+		worker.Name = "source-test";
+		worker.Start();
+
+		const int TimeoutSeconds = 60;
+		if (!worker.Join(TimeSpan.FromSeconds(TimeoutSeconds)))
+		{
+			res["ok"] = false;
+			res["timeout"] = true;
+			res["error"] = "источник не ответил за " + TimeoutSeconds + " с — проверьте адрес, " +
+				"доступность и настройки таймаута";
+			res["durationMs"] = (long)(DateTime.Now - started).TotalMilliseconds;
+			WriteJson(ctx, res, 200);
+			return;
+		}
+
+		long elapsed = (long)(DateTime.Now - started).TotalMilliseconds;
+
+		if (failure != null)
+		{
+			Log.Warn("Проверка источника " + source.Type + ": " + failure.Message);
+			res["ok"] = false;
+			res["error"] = failure.Message;
+			res["durationMs"] = elapsed;
+			WriteJson(ctx, res, 200);
+			return;
+		}
+
+		List<object> items = new List<object>();
+		bool anyReachable = false;
+		foreach (CollectResult r in results ?? new List<CollectResult>())
+		{
+			Dictionary<string, object> item = Json.Obj();
+			item["job"] = r.Job;
+			item["kind"] = r.Kind;
+			item["reachable"] = r.Reachable;
+			item["message"] = r.Message;
+			item["target"] = r.Target;
+			item["responseMs"] = r.ResponseMs;
+			if (r.SizeBytes > 0)
+			{
+				item["sizeBytes"] = r.SizeBytes;
+			}
+			if (r.LastSuccess.HasValue)
+			{
+				item["lastSuccess"] = r.LastSuccess.Value;
+			}
+			if (r.Details != null && r.Details.Count > 0)
+			{
+				item["details"] = r.Details;
+			}
+			items.Add(item);
+			if (r.Reachable)
+			{
+				anyReachable = true;
+			}
+		}
+
+		res["ok"] = anyReachable;
+		res["results"] = items;
+		res["durationMs"] = elapsed;
+		if (items.Count == 0)
+		{
+			res["ok"] = false;
+			res["error"] = "коллектор ничего не вернул — проверьте параметры источника";
+		}
+		else if (!anyReachable)
+		{
+			res["error"] = "источник недоступен";
+		}
+		WriteJson(ctx, res, 200);
 	}
 
 	private Dictionary<string, object> Normalize(Dictionary<string, object> payload, Dictionary<string, object> existing, out List<string> errors)

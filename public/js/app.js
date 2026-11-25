@@ -7026,6 +7026,13 @@
       });
     });
 
+    $$('[data-test-source]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var i = parseInt(btn.getAttribute('data-test-source'), 10);
+        testSource(i, f);
+      });
+    });
+
     // чекбоксы заданий синхронизируются с текстовым полем
     $$('[data-job]').forEach(function (cb) {
       cb.addEventListener('change', function () {
@@ -7062,9 +7069,13 @@
       '<label class="chk" style="margin-left:10px"><input type="checkbox" data-src-enabled="' + idx + '"' +
         (src.enabled !== false ? ' checked' : '') + '> вкл</label>' +
       '<span class="spacer"></span>' +
-      '<button type="button" class="btn btn-sm" data-remove-source="' + idx + '"><i class="fas fa-times"></i></button>' +
+      '<button type="button" class="btn btn-sm" data-test-source="' + idx + '"' +
+        ' title="Выполнить проверку сейчас, ничего не сохраняя"><i class="fas fa-plug"></i> Проверить</button>' +
+      '<button type="button" class="btn btn-sm" data-remove-source="' + idx + '" style="margin-left:6px">' +
+        '<i class="fas fa-times"></i></button>' +
       '</div>' +
-      '<div class="src-marks"></div>';
+      '<div class="src-marks"></div>' +
+      '<div class="src-test" id="src-test-' + idx + '"></div>';
 
     h += '<div class="form-grid">';
 
@@ -7569,6 +7580,66 @@
       toast('Ошибка: ' + err.message, 'error');
     });
   }
+  /**
+   * «Проверить» до сохранения: прогоняет коллектор по значениям из формы.
+   * Ничего не пишет — ни в историю, ни в конфигурацию, ни в состояние.
+   */
+  function testSource(idx, f) {
+    var block = $('[data-src="' + idx + '"]');
+    if (!block) return;
+
+    var out = document.getElementById('src-test-' + idx);
+    var btn = $('[data-test-source="' + idx + '"]', block);
+    if (!out) return;
+
+    var cur = collectForm();
+    var src = cur.sources[idx];
+    if (!src) return;
+
+    // При правке поле пароля пустое — берём сохранённый по ключу.
+    var old = (f.sources || [])[idx];
+    if (!src.password && old && old.passwordSecretKey) {
+      src.passwordSecretKey = old.passwordSecretKey;
+    }
+
+    if (btn) btn.disabled = true;
+    out.className = 'src-test running';
+    out.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Проверяю…';
+
+    api('/api/source/test', {
+      method: 'POST',
+      body: { company: f._origId || f.id || '', source: src }
+    }).then(function (r) {
+      if (!r.ok) {
+        var items = r.results || [];
+        var why = r.error || 'не работает';
+        // Коллектор обычно объясняет причину точнее общего «недоступен».
+        if (items.length && items[0].message) {
+          why = items[0].message;
+        }
+        out.className = 'src-test bad';
+        out.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + esc(why) +
+          (r.durationMs ? ' <span class="muted">· ' + r.durationMs + ' мс</span>' : '');
+        return;
+      }
+
+      var items = r.results || [];
+      var ms = r.durationMs ? ' · ' + r.durationMs + ' мс' : '';
+      var text = '<i class="fas fa-check-circle"></i> работает';
+      if (items.length > 1) text += ' · заданий: ' + items.length;
+      text += ms;
+      if (items[0] && items[0].message) text += ' — ' + esc(items[0].message);
+
+      out.className = 'src-test good';
+      out.innerHTML = text;
+    }).catch(function (err) {
+      out.className = 'src-test bad';
+      out.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + esc(err.message);
+    }).then(function () {
+      if (btn) btn.disabled = false;
+    });
+  }
+
   function testVeeam(idx, f) {
     var block = $('[data-src="' + idx + '"]');
     if (!block) return;

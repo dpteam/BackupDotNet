@@ -1506,6 +1506,25 @@ kbd {
 .src-marks .fld-msg:first-child { margin-top: 8px; }
 .src-marks .fld-msg:last-child { margin-bottom: 8px; }
 
+/* Результат проверки источника до сохранения. */
+.src-test {
+  display: none;
+  margin: 0;
+  padding: 7px 12px;
+  font-size: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.src-test.good,
+.src-test.bad,
+.src-test.running {
+  display: block;
+}
+
+.src-test.good { color: var(--ok); }
+.src-test.bad { color: var(--fail); }
+.src-test.running { color: var(--muted); }
+
 .fld-msg.sources-mark { margin: 0 0 10px; font-weight: 600; }
 
 /* ---------------------------------------------------------------- конфигурация: экспорт/импорт */
