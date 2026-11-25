@@ -38,6 +38,12 @@ public class Notifier
 
 	private readonly string _throttlePath;
 
+	/// <summary>История срабатываний для колокольчика в интерфейсе.</summary>
+	private readonly string _historyPath;
+
+	/// <summary>Отметка «до какого момента прочитано».</summary>
+	private readonly string _readMarkerPath;
+
 	private DateTime _throttleSaved = DateTime.MinValue;
 
 	/// <summary>Счётчики для страницы настроек и диагностики.</summary>
@@ -57,6 +63,8 @@ public class Notifier
 		_config = config;
 		_queuePath = Path.Combine(settings.DataDir, "state", "notify-queue.ndjson");
 		_throttlePath = Path.Combine(settings.DataDir, "state", "notify-throttle.json");
+		_historyPath = Path.Combine(settings.DataDir, "state", "notifications.ndjson");
+		_readMarkerPath = Path.Combine(settings.DataDir, "state", "notifications-read.txt");
 		LoadThrottle();
 	}
 
@@ -237,6 +245,7 @@ public class Notifier
 		}
 
 		List<string> errors = new List<string>();
+		string channels = ChannelsUsed();
 
 		if (SmtpConfigured)
 		{
@@ -260,6 +269,7 @@ public class Notifier
 			FailedCount++;
 			LastError = string.Join("; ", errors.ToArray());
 			Log.Warn("Уведомление не отправлено: " + LastError);
+			Record(e, "failed", channels, LastError);
 			Enqueue(e);
 			return LastError;
 		}
@@ -273,7 +283,29 @@ public class Notifier
 		LastSentAt = DateTime.Now;
 		LastError = "";
 		Log.Info("Уведомление отправлено: " + e.Title);
+
+		// Если ни один канал не настроен, «отправлено» — неправда: в истории
+		// появилось бы событие, которого не было. Такое не записываем.
+		if (channels.Length > 0)
+		{
+			Record(e, "sent", channels, "");
+		}
 		return "";
+	}
+
+	/// <summary>Через что отправляли — для истории.</summary>
+	private string ChannelsUsed()
+	{
+		List<string> parts = new List<string>();
+		if (SmtpConfigured)
+		{
+			parts.Add("SMTP");
+		}
+		if (TelegramConfigured)
+		{
+			parts.Add("Telegram");
+		}
+		return string.Join(", ", parts.ToArray());
 	}
 
 	// ------------------------------------------------------------------ SMTP
@@ -695,6 +727,175 @@ public class Notifier
 		LastError = "";
 		Log.Info("Уведомления: тестовое сообщение отправлено");
 		return "";
+	}
+
+	/// <summary>
+	/// Записывает срабатывание в локальную историю.
+	///
+	/// Зачем отдельно от счётчиков: «отправлено 42» не отвечает на вопрос
+	/// «что именно прилетело ночью». История хранится рядом с очередью,
+	/// в том же формате NDJSON, и не растёт бесконечно.
+	/// </summary>
+	private void Record(NotifyEvent e, string status, string channels, string error)
+	{
+		try
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(_historyPath));
+			Dictionary<string, object> d = Json.Obj();
+			d["ts"] = DateTime.Now;
+			d["status"] = status;
+			d["kind"] = e.Kind;
+			d["title"] = e.Title;
+			d["company"] = e.CompanyName;
+			d["companyId"] = e.CompanyId;
+			d["job"] = e.Job;
+			d["message"] = e.Message;
+			d["channels"] = channels;
+			if (!string.IsNullOrEmpty(error))
+			{
+				d["error"] = error;
+			}
+			lock (_sync)
+			{
+				File.AppendAllText(_historyPath, Json.Write(d) + "\n", new UTF8Encoding(false));
+				TrimHistory();
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Warn("История уведомлений: " + ex.Message);
+		}
+	}
+
+	/// <summary>Оставляет последние <see cref="HistoryKeep"/> записей.</summary>
+	private void TrimHistory()
+	{
+		try
+		{
+			if (!File.Exists(_historyPath))
+			{
+				return;
+			}
+			string[] lines = File.ReadAllLines(_historyPath);
+			if (lines.Length <= HistoryKeep + 200)
+			{
+				return;
+			}
+			int from = lines.Length - HistoryKeep;
+			StringBuilder sb = new StringBuilder();
+			for (int i = from; i < lines.Length; i++)
+			{
+				sb.AppendLine(lines[i]);
+			}
+			File.WriteAllText(_historyPath, sb.ToString(), new UTF8Encoding(false));
+		}
+		catch
+		{
+		}
+	}
+
+	/// <summary>Сколько записей истории хранить.</summary>
+	public const int HistoryKeep = 500;
+
+	/// <summary>Последние срабатывания, свежие сверху.</summary>
+	public List<Dictionary<string, object>> History(int limit)
+	{
+		List<Dictionary<string, object>> list = new List<Dictionary<string, object>>();
+		if (limit <= 0)
+		{
+			limit = 50;
+		}
+		try
+		{
+			if (!File.Exists(_historyPath))
+			{
+				return list;
+			}
+			string[] lines = File.ReadAllLines(_historyPath);
+			int from = Math.Max(0, lines.Length - limit);
+			for (int i = lines.Length - 1; i >= from; i--)
+			{
+				if (string.IsNullOrWhiteSpace(lines[i]))
+				{
+					continue;
+				}
+				try
+				{
+					list.Add(Json.ParseObject(lines[i]));
+				}
+				catch
+				{
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Warn("Чтение истории уведомлений: " + ex.Message);
+		}
+		return list;
+	}
+
+	/// <summary>Сколько срабатываний было после последнего прочтения.</summary>
+	public int UnreadCount()
+	{
+		try
+		{
+			if (!File.Exists(_historyPath))
+			{
+				return 0;
+			}
+			DateTime readAt = DateTime.MinValue;
+			if (File.Exists(_readMarkerPath))
+			{
+				DateTime.TryParse(File.ReadAllText(_readMarkerPath).Trim(), CultureInfo.InvariantCulture,
+					DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out readAt);
+			}
+			int n = 0;
+			foreach (string line in File.ReadAllLines(_historyPath))
+			{
+				if (string.IsNullOrWhiteSpace(line))
+				{
+					continue;
+				}
+				try
+				{
+					Dictionary<string, object> d = Json.ParseObject(line);
+					DateTime ts = DateTime.MinValue;
+					DateTime.TryParse(Json.GetStr(d, "ts", ""), CultureInfo.InvariantCulture,
+						DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out ts);
+					if (ts > readAt)
+					{
+						n++;
+					}
+				}
+				catch
+				{
+				}
+			}
+			return n;
+		}
+		catch
+		{
+			return 0;
+		}
+	}
+
+	/// <summary>Отмечает всё прочитанным.</summary>
+	public void MarkRead()
+	{
+		try
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(_readMarkerPath));
+			// Тот же формат, что у записей истории: сравнение идёт в UTC,
+			// иначе отметка и время записи расходятся на часовой пояс.
+			File.WriteAllText(_readMarkerPath,
+				DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture),
+				new UTF8Encoding(false));
+		}
+		catch (Exception ex)
+		{
+			Log.Warn("Отметка прочтения уведомлений: " + ex.Message);
+		}
 	}
 
 	/// <summary>Состояние для страницы настроек и диагностики.</summary>

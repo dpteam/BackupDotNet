@@ -467,6 +467,21 @@ public class ApiHandler
 				HandleSourceTest(ctx, session);
 				return;
 			}
+			if (path == "/api/notifications" && method == "GET")
+			{
+				HandleNotifications(ctx, session);
+				return;
+			}
+			if (path == "/api/notifications/read" && method == "POST")
+			{
+				Notifier n = _scheduler?.Notifier;
+				if (n != null)
+				{
+					n.MarkRead();
+				}
+				WriteJson(ctx, Json.Obj("ok", true), 200);
+				return;
+			}
 			switch (path)
 			{
 			case "/api/uptime":
@@ -3930,6 +3945,45 @@ public class ApiHandler
 			resp["jobsError"] = jobsError;
 		}
 		WriteJson(ctx, resp, 200);
+	}
+
+	/// <summary>
+	/// GET /api/notifications?limit=50 — история срабатываний для колокольчика.
+	///
+	/// Показывает не только «отправлено», но и «не отправлено» с причиной:
+	/// иначе человек видит, что уведомлений нет, и не знает, что они
+	/// застряли в очереди из-за неверного пароля SMTP.
+	/// </summary>
+	private void HandleNotifications(HttpListenerContext ctx, SessionInfo si)
+	{
+		Notifier n = _scheduler?.Notifier;
+		Dictionary<string, object> res = Json.Obj();
+		if (n == null)
+		{
+			res["items"] = new List<object>();
+			res["unread"] = 0;
+			res["enabled"] = false;
+			WriteJson(ctx, res, 200);
+			return;
+		}
+
+		int limit = 50;
+		int.TryParse(Query(ctx, "limit"), out limit);
+		if (limit <= 0 || limit > 200)
+		{
+			limit = 50;
+		}
+
+		List<object> items = new List<object>();
+		foreach (Dictionary<string, object> d in n.History(limit))
+		{
+			items.Add(d);
+		}
+		res["items"] = items;
+		res["unread"] = n.UnreadCount();
+		res["enabled"] = n.AnyChannelEnabled;
+		res["queued"] = n.QueueLength;
+		WriteJson(ctx, res, 200);
 	}
 
 	/// <summary>

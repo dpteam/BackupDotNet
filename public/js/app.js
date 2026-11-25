@@ -421,6 +421,11 @@
   function hideLogin() {
     loginScreen.classList.add('hidden');
     app.classList.remove('hidden');
+    // Колокольчик уведомлений живёт вместе с приложением, не со страницей.
+    if (!bellState.bound) {
+      bellState.bound = true;
+      bindBell();
+    }
   }
 
   var loginForm = document.getElementById('login-form');
@@ -454,6 +459,98 @@
       showLogin();
     }).catch(function () { showLogin(); });
   });
+
+  // ------------------------------------------------------------------ уведомления
+
+  var bellState = { timer: null, loaded: false, bound: false };
+
+  /** Обновляет счётчик непрочитанных на колокольчике. */
+  function refreshBell() {
+    api('/api/notifications?limit=1').then(function (r) {
+      var badge = document.getElementById('bell-badge');
+      if (!badge) return;
+      var n = r.unread || 0;
+      badge.textContent = n > 99 ? '99+' : String(n);
+      badge.classList.toggle('hidden', n === 0);
+    }).catch(function () { /* колокольчик не критичен */ });
+  }
+
+  /** Открывает или закрывает панель истории. */
+  function toggleBell() {
+    var panel = document.getElementById('bell-panel');
+    if (!panel) return;
+    var willShow = panel.classList.contains('hidden');
+    panel.classList.toggle('hidden', !willShow);
+    if (!willShow) return;
+
+    var list = document.getElementById('bell-list');
+    list.innerHTML = '<div class="bell-empty">Загрузка…</div>';
+
+    api('/api/notifications?limit=50').then(function (r) {
+      var items = r.items || [];
+      if (!items.length) {
+        list.innerHTML = '<div class="bell-empty">' +
+          (r.enabled
+            ? 'Пока ничего не прилетало. Уведомления включаются в настройках.'
+            : 'Уведомления выключены: ни SMTP, ни Telegram не настроены.') +
+          '</div>';
+        return;
+      }
+      list.innerHTML = items.map(function (it) {
+        // Рамка — про доставку, значок — про событие. Иначе «сбой»
+        // с зелёной галочкой читается как хорошая новость.
+        var cls = it.status === 'failed' ? 'failed' : 'sent';
+        var isBad = (it.kind === 'fail' || it.kind === 'nodata');
+        var isGood = (it.kind === 'recover');
+        var icon = isGood ? 'fa-check-circle' : (isBad ? 'fa-exclamation-triangle' : 'fa-info-circle');
+        var iconColor = isGood ? 'var(--ok)' : (isBad ? 'var(--warn)' : 'var(--muted)');
+        var meta = [];
+        if (it.company) meta.push(esc(it.company));
+        if (it.job) meta.push(esc(it.job));
+        if (it.channels) meta.push(esc(it.channels));
+        return '<div class="bell-item ' + cls + '">' +
+          '<div class="bi-top">' +
+            '<i class="fas ' + icon + '" style="color:' + iconColor + '"></i>' +
+            '<span class="bi-title">' + esc(it.title || it.kind || '') + '</span>' +
+            '<span class="bi-time">' + fmtDateTime(it.ts) + '</span>' +
+          '</div>' +
+          (it.message ? '<div class="bi-msg">' + esc(it.message) + '</div>' : '') +
+          (it.error ? '<div class="bi-msg" style="color:var(--fail)">' + esc(it.error) + '</div>' : '') +
+          (meta.length ? '<div class="bi-meta">' + meta.join(' · ') + '</div>' : '') +
+          '</div>';
+      }).join('');
+
+      // Открыли и посмотрели — значит прочитали.
+      api('/api/notifications/read', { method: 'POST', body: {} }).then(function () {
+        var badge = document.getElementById('bell-badge');
+        if (badge) badge.classList.add('hidden');
+      }).catch(function () {});
+    }).catch(function (err) {
+      list.innerHTML = '<div class="bell-empty">Ошибка: ' + esc(err.message) + '</div>';
+    });
+  }
+
+  function bindBell() {
+    var btn = document.getElementById('btn-bell');
+    if (btn) btn.addEventListener('click', function (e) { e.stopPropagation(); toggleBell(); });
+
+    var close = document.getElementById('bell-close');
+    if (close) close.addEventListener('click', function () {
+      document.getElementById('bell-panel').classList.add('hidden');
+    });
+
+    // Клик мимо панели закрывает её.
+    document.addEventListener('click', function (e) {
+      var panel = document.getElementById('bell-panel');
+      if (!panel || panel.classList.contains('hidden')) return;
+      if (panel.contains(e.target)) return;
+      if (e.target.closest && e.target.closest('#btn-bell')) return;
+      panel.classList.add('hidden');
+    });
+
+    refreshBell();
+    bellState.timer = setInterval(refreshBell, 60000);
+  }
 
   // ------------------------------------------------------------------ тема
 
