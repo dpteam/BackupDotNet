@@ -7015,10 +7015,8 @@
     // ---- источники
     html += '<div class="card"><div class="card-head"><i class="fas fa-plug"></i> Что проверять' +
       '<span class="spacer"></span>' +
-      '<select id="add-source-type" class="sel-inline">' +
-      SOURCE_TYPES.map(function (t) { return '<option value="' + t.id + '">' + esc(t.label) + '</option>'; }).join('') +
-      '</select>' +
-      '<button type="button" class="btn btn-sm" id="btn-add-source"><i class="fas fa-plus"></i> Источник</button>' +
+      '<button type="button" class="btn btn-sm btn-primary" id="btn-add-source">' +
+        '<i class="fas fa-plus"></i> Добавить источник</button>' +
       '</div><div class="card-body" id="sources-box">';
 
     f.sources.forEach(function (src, idx) {
@@ -7090,11 +7088,7 @@
     });
 
     document.getElementById('btn-add-source').addEventListener('click', function () {
-      var cur = collectForm();
-      var type = document.getElementById('add-source-type').value;
-      cur.sources.push(emptySource(type));
-      cur._isNew = f._isNew; cur._origId = f._origId;
-      renderForm(cur);
+      openSourceWizard(f);
     });
 
     // смена типа источника — перерисовываем блок, сохраняя общие поля
@@ -7186,9 +7180,382 @@
     }
   }
 
+  /**
+   * Мастер добавления источника.
+   *
+   * Зачем мастер, если есть выпадающий список типов: в списке 21 пункт
+   * с техническими именами («veeam-files», «iperius-ftp»), и человек,
+   * который просто хочет «проверить, что бэкап 1С свежий», не понимает,
+   * что выбрать. Мастер спрашивает по-человечески, а тип подставляет сам.
+   *
+   * Три шага: что проверяем → чем именно → минимально нужные поля
+   * с проверкой до добавления.
+   */
+  var WIZARD_CATEGORIES = [
+    {
+      id: 'backup', label: 'Резервные копии', icon: 'fa-archive',
+      hint: 'Файлы бэкапов, ZIP, Veeam, Iperius',
+      types: ['file-age', 'zip', 'veeam-rest', 'veeam-files', 'iperius-ftp', 'vss']
+    },
+    {
+      id: 'uptime', label: 'Доступность', icon: 'fa-heartbeat',
+      hint: 'Сайт, порт, пинг, DNS, heartbeat',
+      types: ['http', 'tcp', 'ping', 'dns', 'push']
+    },
+    {
+      id: 'hardware', label: 'Железо', icon: 'fa-microchip',
+      hint: 'Диски, RAID, температуры, питание',
+      types: ['smart', 'raid', 'hardware', 'eventlog']
+    },
+    {
+      id: 'infra', label: 'Инфраструктура', icon: 'fa-server',
+      hint: 'Hyper-V, ESXi, MikroTik, сеть, задачи',
+      types: ['hyperv', 'esxi', 'mikrotik', 'inventory', 'netconfig', 'tasks']
+    }
+  ];
+
+  /**
+   * Поля, которые мастер спрашивает у человека. Остальное — умолчания
+   * коллектора: показывать 20 полей на первом шаге значит отпугнуть.
+   */
+  var WIZARD_FIELDS = {
+    'file-age': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Бэкап', required: true },
+      { key: 'paths', label: 'Пути (по одному в строке)', multiline: true, dflt: '', required: true,
+        hint: 'например D:\\Backup\\1C\\*.dt' },
+      { key: 'maxAgeHours', label: 'Макс. возраст, ч', type: 'number', dflt: 26 }
+    ],
+    'zip': [
+      { key: 'jobName', label: 'Название задания', dflt: 'ZIP', required: true },
+      { key: 'path', label: 'Путь к архиву', dflt: '', required: true,
+        hint: 'D:\\Backup\\latest.zip или \\\\srv\\share\\*.zip' },
+      { key: 'maxAgeHours', label: 'Макс. возраст, ч', type: 'number', dflt: 26 }
+    ],
+    'veeam-rest': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Veeam', required: true },
+      { key: 'url', label: 'Адрес сервера', dflt: '', required: true, hint: 'https://10.0.0.5:9419' },
+      { key: 'username', label: 'Логин', dflt: '' },
+      { key: 'password', label: 'Пароль', type: 'password', dflt: '' }
+    ],
+    'veeam-files': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Veeam файлы', required: true },
+      { key: 'paths', label: 'Пути к .vbk/.vib', multiline: true, dflt: '', required: true },
+      { key: 'maxAgeHours', label: 'Макс. возраст, ч', type: 'number', dflt: 26 }
+    ],
+    'iperius-ftp': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Iperius', required: true },
+      { key: 'ftp.host', label: 'FTP-сервер', dflt: '', required: true },
+      { key: 'ftp.username', label: 'Логин', dflt: '' },
+      { key: 'ftp.password', label: 'Пароль', type: 'password', dflt: '' },
+      { key: 'ftp.path', label: 'Каталог на FTP', dflt: '/' }
+    ],
+    'vss': [
+      { key: 'jobName', label: 'Название задания', dflt: 'VSS', required: true }
+    ],
+    'http': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Портал', required: true },
+      { key: 'url', label: 'URL', dflt: '', required: true, hint: 'https://portal.example.org/health' },
+      { key: 'expectedStatus', label: 'Ожидаемый код', type: 'number', dflt: 200 },
+      { key: 'keyword', label: 'Ключевое слово', dflt: '', hint: 'искать в теле; пусто = не проверять' }
+    ],
+    'tcp': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Порт', required: true },
+      { key: 'host', label: 'Хост', dflt: '', required: true },
+      { key: 'port', label: 'Порт', type: 'number', dflt: 3389, required: true }
+    ],
+    'ping': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Шлюз', required: true },
+      { key: 'host', label: 'Хост', dflt: '', required: true }
+    ],
+    'dns': [
+      { key: 'jobName', label: 'Название задания', dflt: 'DNS', required: true },
+      { key: 'host', label: 'Имя для проверки', dflt: '', required: true, hint: 'например corp.local' },
+      { key: 'recordType', label: 'Тип записи', dflt: 'A' }
+    ],
+    'push': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Heartbeat', required: true },
+      { key: 'staleMinutes', label: 'Тревога, если молчит, мин', type: 'number', dflt: 60 }
+    ],
+    'smart': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Диски' },
+      { key: 'minLifePercent', label: 'Мин. остаток ресурса, %', type: 'number', dflt: 10 }
+    ],
+    'raid': [
+      { key: 'jobName', label: 'Название задания', dflt: 'RAID' }
+    ],
+    'hardware': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Железо' },
+      { key: 'bmcHost', label: 'IPMI/BMC адрес', dflt: '', hint: 'пусто = локальный WMI' },
+      { key: 'bmcUser', label: 'Логин IPMI', dflt: '' },
+      { key: 'bmcPassword', label: 'Пароль IPMI', type: 'password', dflt: '' }
+    ],
+    'eventlog': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Журнал событий' },
+      { key: 'recordType', label: 'Тип событий', dflt: 'Error' },
+      { key: 'maxAgeHours', label: 'За сколько часов смотреть', type: 'number', dflt: 24 }
+    ],
+    'hyperv': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Hyper-V' },
+      { key: 'snapshotMaxAgeDays', label: 'Снимки старше, дней', type: 'number', dflt: 7 }
+    ],
+    'esxi': [
+      { key: 'jobName', label: 'Название задания', dflt: 'ESXi', required: true },
+      { key: 'host', label: 'Адрес хоста', dflt: '', required: true },
+      { key: 'username', label: 'Логин', dflt: 'root' },
+      { key: 'password', label: 'Пароль', type: 'password', dflt: '' }
+    ],
+    'mikrotik': [
+      { key: 'jobName', label: 'Название задания', dflt: 'MikroTik', required: true },
+      { key: 'host', label: 'Адрес', dflt: '', required: true },
+      { key: 'username', label: 'Логин', dflt: 'admin' },
+      { key: 'password', label: 'Пароль', type: 'password', dflt: '' }
+    ],
+    'inventory': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Инвентарь' }
+    ],
+    'netconfig': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Сеть' }
+    ],
+    'tasks': [
+      { key: 'jobName', label: 'Название задания', dflt: 'Задачи' },
+      { key: 'expectedRunning', label: 'Должны выполняться (по одному в строке)', multiline: true, dflt: '' }
+    ]
+  };
+
+  var wizardState = { step: 1, category: '', type: '', testResult: null };
+
+  /** Открывает мастер добавления источника. */
+  function openSourceWizard(f) {
+    wizardState = { step: 1, category: '', type: '', testResult: null };
+    renderWizard(f);
+  }
+
+  function renderWizard(f) {
+    var old = document.getElementById('wizard-overlay');
+    if (old) old.parentNode.removeChild(old);
+
+    var overlay = document.createElement('div');
+    overlay.id = 'wizard-overlay';
+    overlay.className = 'wizard-overlay';
+
+    var body = '';
+    if (wizardState.step === 1) {
+      body = '<div class="wiz-cats">' + WIZARD_CATEGORIES.map(function (c) {
+        return '<button type="button" class="wiz-cat" data-cat="' + c.id + '">' +
+          '<i class="fas ' + c.icon + '"></i>' +
+          '<div class="wiz-cat-label">' + esc(c.label) + '</div>' +
+          '<div class="wiz-cat-hint">' + esc(c.hint) + '</div>' +
+          '</button>';
+      }).join('') + '</div>';
+    } else if (wizardState.step === 2) {
+      var cat = WIZARD_CATEGORIES.filter(function (c) { return c.id === wizardState.category; })[0];
+      var types = (cat ? cat.types : []).map(function (id) {
+        var t = SOURCE_TYPES.filter(function (x) { return x.id === id; })[0];
+        return t || { id: id, label: id, hint: '' };
+      });
+      body = '<div class="wiz-types">' + types.map(function (t) {
+        return '<button type="button" class="wiz-type" data-type="' + t.id + '">' +
+          '<div class="wiz-type-label">' + esc(t.label) + '</div>' +
+          '<div class="wiz-type-hint">' + esc(t.hint || '') + '</div>' +
+          '</button>';
+      }).join('') + '</div>';
+    } else {
+      var fields = WIZARD_FIELDS[wizardState.type] || [];
+      body = '<div class="wiz-fields">' + fields.map(function (fl) {
+        var id = 'wiz-f-' + fl.key.replace('.', '-');
+        var val = fl.dflt === undefined ? '' : fl.dflt;
+        var input;
+        if (fl.multiline) {
+          input = '<textarea id="' + id + '" data-wiz-key="' + esc(fl.key) + '" rows="3">' + esc(val) + '</textarea>';
+        } else {
+          input = '<input id="' + id + '" data-wiz-key="' + esc(fl.key) + '" type="' +
+            (fl.type || 'text') + '" value="' + esc(val) + '">';
+        }
+        return '<label class="fld"><span>' + esc(fl.label) + (fl.required ? ' *' : '') + '</span>' +
+          input + (fl.hint ? '<small>' + esc(fl.hint) + '</small>' : '') + '</label>';
+      }).join('') + '</div>' +
+        '<div class="wiz-test" id="wiz-test"></div>';
+    }
+
+    var backBtn = wizardState.step === 1
+      ? ''
+      : '<button type="button" class="btn" id="wiz-back">Назад</button>';
+
+    var nextBtn = wizardState.step === 3
+      ? '<button type="button" class="btn" id="wiz-test-btn"><i class="fas fa-plug"></i> Проверить</button>' +
+        '<button type="button" class="btn btn-primary" id="wiz-add"><i class="fas fa-plus"></i> Добавить</button>'
+      : '<button type="button" class="btn btn-primary" id="wiz-next">Далее</button>';
+
+    overlay.innerHTML = '<div class="wiz-card">' +
+      '<div class="wiz-head">' +
+        '<i class="fas fa-plus-circle"></i> Новый источник' +
+        '<span class="spacer"></span>' +
+        '<span class="muted" style="font-size:11px">шаг ' + wizardState.step + ' из 3</span>' +
+        '<button type="button" class="btn btn-sm" id="wiz-close" style="margin-left:8px">' +
+          '<i class="fas fa-times"></i></button>' +
+      '</div>' +
+      '<div class="wiz-body">' + body + '</div>' +
+      '<div class="wiz-foot">' + backBtn + '<span class="spacer"></span>' + nextBtn + '</div>' +
+      '</div>';
+
+    document.body.appendChild(overlay);
+
+    document.getElementById('wiz-close').addEventListener('click', closeWizard);
+
+    var next = document.getElementById('wiz-next');
+    if (next) next.addEventListener('click', function () { wizardNext(f); });
+    var back = document.getElementById('wiz-back');
+    if (back) back.addEventListener('click', function () {
+      wizardState.step = Math.max(1, wizardState.step - 1);
+      wizardState.testResult = null;
+      renderWizard(f);
+    });
+
+    $$('[data-cat]', overlay).forEach(function (b) {
+      b.addEventListener('click', function () {
+        wizardState.category = b.getAttribute('data-cat');
+        wizardState.step = 2;
+        renderWizard(f);
+      });
+    });
+    $$('[data-type]', overlay).forEach(function (b) {
+      b.addEventListener('click', function () {
+        wizardState.type = b.getAttribute('data-type');
+        wizardState.step = 3;
+        renderWizard(f);
+      });
+    });
+
+    var testBtn = document.getElementById('wiz-test-btn');
+    if (testBtn) testBtn.addEventListener('click', function () { wizardTest(f, testBtn); });
+    var addBtn = document.getElementById('wiz-add');
+    if (addBtn) addBtn.addEventListener('click', function () { wizardAdd(f); });
+  }
+
+  function closeWizard() {
+    var o = document.getElementById('wizard-overlay');
+    if (o) o.parentNode.removeChild(o);
+  }
+
+  function wizardNext(f) {
+    if (wizardState.step === 1) {
+      if (!wizardState.category) { toast('Выберите, что проверяем', 'error'); return; }
+      wizardState.step = 2;
+    } else if (wizardState.step === 2) {
+      if (!wizardState.type) { toast('Выберите тип проверки', 'error'); return; }
+      wizardState.step = 3;
+    }
+    renderWizard(f);
+  }
+
+  /** Собирает источник из полей мастера. */
+  function wizardSource() {
+    var src = { type: wizardState.type, id: '', enabled: true, intervalMinutes: 0 };
+    var fields = WIZARD_FIELDS[wizardState.type] || [];
+    var missing = [];
+    fields.forEach(function (fl) {
+      var el = document.getElementById('wiz-f-' + fl.key.replace('.', '-'));
+      if (!el) return;
+      var val = el.value;
+      if (fl.multiline) {
+        val = val.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+      }
+      if (fl.required && (!val || (val.length === 0))) {
+        missing.push(fl.label);
+      }
+      // Вложенные ключи вида ftp.host собираем в объект.
+      if (fl.key.indexOf('.') > 0) {
+        var parts = fl.key.split('.');
+        src[parts[0]] = src[parts[0]] || {};
+        src[parts[0]][parts[1]] = val;
+      } else if (fl.type === 'number') {
+        src[fl.key] = parseInt(val, 10) || 0;
+      } else {
+        src[fl.key] = val;
+      }
+    });
+    return { source: src, missing: missing };
+  }
+
+  function wizardTest(f, btn) {
+    var built = wizardSource();
+    if (built.missing.length) {
+      toast('Заполните: ' + built.missing.join(', '), 'error');
+      return;
+    }
+    var out = document.getElementById('wiz-test');
+    btn.disabled = true;
+    out.className = 'wiz-test running';
+    out.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Проверяю…';
+
+    api('/api/source/test', {
+      method: 'POST',
+      body: { company: f._origId || '', source: built.source }
+    }).then(function (r) {
+      var items = r.results || [];
+      if (!r.ok) {
+        var why = r.error || 'не работает';
+        if (items.length && items[0].message) why = items[0].message;
+        out.className = 'wiz-test bad';
+        out.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + esc(why) +
+          ' — можно добавить как есть и разобраться позже';
+        return;
+      }
+      out.className = 'wiz-test good';
+      out.innerHTML = '<i class="fas fa-check-circle"></i> работает' +
+        (r.durationMs ? ' · ' + r.durationMs + ' мс' : '') +
+        (items[0] && items[0].message ? ' — ' + esc(items[0].message) : '');
+    }).catch(function (err) {
+      out.className = 'wiz-test bad';
+      out.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + esc(err.message);
+    }).then(function () {
+      btn.disabled = false;
+    });
+  }
+
+  function wizardAdd(f) {
+    var built = wizardSource();
+    if (built.missing.length) {
+      toast('Заполните: ' + built.missing.join(', '), 'error');
+      return;
+    }
+    // id генерируем из типа и имени задания: «http-portal».
+    // Уникальность обязательна: два источника с одним id перезаписывают
+    // друг друга в состоянии — форма об этом честно предупреждает.
+    var baseSlug = slugifyRu(built.source.jobName || '') || 'source';
+    var candidate = built.source.type + '-' + baseSlug;
+    var taken = {};
+    (collectForm().sources || []).forEach(function (s) {
+      if (s && s.id) taken[s.id] = true;
+    });
+    var id = candidate;
+    var n = 2;
+    while (taken[id]) {
+      id = candidate + '-' + n;
+      n++;
+    }
+    built.source.id = id;
+    built.source._jobList = null;
+
+    var cur = collectForm();
+    cur.sources.push(built.source);
+    cur._isNew = f._isNew;
+    cur._origId = f._origId;
+    cur._agents = f._agents;
+    cur._focusSource = built.source.id;
+
+    closeWizard();
+    renderForm(cur);
+    toast('Источник добавлен — не забудьте сохранить', 'ok');
+  }
+
   function renderSourceBlock(src, idx, f) {
     var h = '<div class="src-block" data-src="' + idx + '">';
 
+    // id источника — скрытым полем: без него при каждой перерисовке формы
+    // (смена типа, проверка, добавление) идентификатор терялся, и два
+    // источника одного типа начинали перезаписывать друг друга.
+    h += '<input type="hidden" data-f="src.' + idx + '.id" value="' + esc(src.id || '') + '">';
     // тип источника — выпадающий список (можно менять после создания)
     h += '<div class="src-head">' +
       '<select class="src-type" data-src-type="' + idx + '">' +

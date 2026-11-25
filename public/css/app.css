@@ -1618,6 +1618,125 @@ kbd {
 
 .bell-empty { padding: 18px 12px; color: var(--muted); font-size: 12px; text-align: center; }
 
+/* ---------------------------------------------------------------- мастер источника */
+
+.wizard-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 60px 16px 16px;
+  z-index: 1000;
+  overflow-y: auto;
+}
+
+.wiz-card {
+  width: 640px;
+  max-width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, .35);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.wiz-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.wiz-head .spacer { margin-left: auto; }
+
+.wiz-body { padding: 14px; }
+
+.wiz-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.wiz-foot .spacer { margin-left: auto; }
+
+.wiz-cats,
+.wiz-types {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.wiz-cat,
+.wiz-type {
+  display: block;
+  text-align: left;
+  padding: 12px;
+  background: var(--surface-alt, var(--bg));
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.wiz-cat:hover,
+.wiz-type:hover {
+  border-color: var(--brand);
+  background: var(--brand-soft, rgba(0, 136, 255, .08));
+}
+
+.wiz-cat i {
+  font-size: 18px;
+  color: var(--brand-hi);
+  margin-bottom: 6px;
+}
+
+.wiz-cat-label,
+.wiz-type-label { font-weight: 600; font-size: 13px; }
+
+.wiz-cat-hint,
+.wiz-type-hint {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+.wiz-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.wiz-fields .fld { margin: 0; }
+
+.wiz-fields .fld:has(textarea) { grid-column: 1 / -1; }
+
+.wiz-test {
+  display: none;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.wiz-test.good,
+.wiz-test.bad,
+.wiz-test.running { display: block; }
+
+.wiz-test.good { color: var(--ok); background: var(--ok-soft, rgba(34, 197, 94, .1)); }
+.wiz-test.bad { color: var(--fail); background: var(--fail-soft, rgba(239, 68, 68, .1)); }
+.wiz-test.running { color: var(--muted); }
+
 /* ---------------------------------------------------------------- конфигурация: экспорт/импорт */
 
 .cfg-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
